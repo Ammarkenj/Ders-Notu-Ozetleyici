@@ -5,6 +5,10 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+from fastapi.middleware.cors import CORSMiddleware
 
 from src.ocr_engine import extract_text_from_image
 from src.rag_engine import (
@@ -40,13 +44,9 @@ AUDIO_DIR.mkdir(parents=True, exist_ok=True)
 PRESENTATION_DIR = STATIC_DIR / "presentations"
 PRESENTATION_DIR.mkdir(parents=True, exist_ok=True)
 
-app = FastAPI(
-    title="Ders Notu Özetleyici & RAG Asistanı API",
-    description="NotebookLM benzeri ders notu özetleme, RAG tabanlı soru yanıtlama, otomatik quiz ve Edge-TTS sesli özet servisi.",
-    version="2.1.0",
-)
+app = FastAPI(title="Ders Notu Özetleyici")
 
-# CORS yapılandırması
+# CORS ayarları (Eğer projende varsa app = FastAPI()'nin hemen altında olmalı)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -54,6 +54,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 2. APP OLUŞTURULDUKTAN SONRA EKLENMESİ GEREKEN KISIM: Arayüzü bağla
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+@app.get("/")
+async def read_index():
+    return FileResponse("static/index.html")
 
 # Statik dosyaları (özellikle oluşturulan ses dosyalarını) dışa aç
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
