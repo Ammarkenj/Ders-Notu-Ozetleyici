@@ -48,7 +48,7 @@ def get_summarizer_pipeline(model_name: Optional[str] = None):
 
 def summarize_text(
     text: str,
-    max_length: int = 150,
+    max_length: int = 1024,
     min_length: int = 30,
     model_name: Optional[str] = None,
 ) -> str:
@@ -145,7 +145,7 @@ def generate_quiz_and_flashcards(
 ) -> Dict[str, Any]:
     """Ders notundan otomatik çoktan seçmeli Soru-Cevap (Quiz) ve Soru Kartları (Flashcards) üretir.
 
-    NotebookLM benzeri çalışma kartları ve test modülü sağlar.
+    Akıllı Not benzeri çalışma kartları ve test modülü sağlar.
     """
     cleaned_text = text.strip()
     if not cleaned_text:

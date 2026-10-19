@@ -1,0 +1,1551 @@
+<!DOCTYPE html>
+<html lang="tr" class="dark h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Akıllı Not AI - Ders Notu & RAG Asistanı</title>
+    <!-- Google Fonts: Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <!-- Font Awesome -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" rel="stylesheet">
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Marked.js CDN for Markdown Parsing -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <!-- Mermaid.js CDN for Visual Diagrams & Mindmaps -->
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <script>
+        mermaid.initialize({
+            startOnLoad: false,
+            theme: 'dark',
+            securityLevel: 'loose',
+            flowchart: {
+                useMaxWidth: false,
+                htmlLabels: true,
+                curve: 'basis'
+            }
+        });
+    </script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                    colors: {
+                        dark: {
+                            bg: '#090d16',
+                            card: '#0f172a',
+                            border: '#1e293b',
+                            input: '#151e33',
+                            hover: '#1e2942',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        /* Custom sleek scrollbars */
+        ::-webkit-scrollbar { width: 5px; height: 5px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 9999px; }
+        ::-webkit-scrollbar-thumb:hover { background: #475569; }
+        
+        .glass-header {
+            background: rgba(15, 23, 42, 0.75);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+        }
+
+        .studio-card {
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .studio-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px -4px rgba(99, 102, 241, 0.15);
+        }
+
+        @keyframes pulseDot {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.4; transform: scale(0.85); }
+        }
+        .animate-dot {
+            animation: pulseDot 2s infinite ease-in-out;
+        }
+
+        /* Markdown Renderer Styles */
+        .markdown-content {
+            line-height: 1.65;
+            word-break: break-word;
+        }
+        .markdown-content p {
+            margin-bottom: 0.75rem;
+        }
+        .markdown-content p:last-child {
+            margin-bottom: 0;
+        }
+        .markdown-content ul {
+            list-style-type: disc;
+            margin-left: 1.25rem;
+            margin-bottom: 0.75rem;
+        }
+        .markdown-content ol {
+            list-style-type: decimal;
+            margin-left: 1.25rem;
+            margin-bottom: 0.75rem;
+        }
+        .markdown-content li {
+            margin-bottom: 0.25rem;
+        }
+        .markdown-content h1, 
+        .markdown-content h2, 
+        .markdown-content h3, 
+        .markdown-content h4 {
+            font-weight: 700;
+            color: #f1f5f9;
+            margin-top: 1rem;
+            margin-bottom: 0.5rem;
+            line-height: 1.3;
+        }
+        .markdown-content h1 { font-size: 1.25rem; }
+        .markdown-content h2 { font-size: 1.1rem; }
+        .markdown-content h3 { font-size: 1rem; }
+        .markdown-content strong {
+            font-weight: 600;
+            color: #f8fafc;
+        }
+        .markdown-content em {
+            font-style: italic;
+            color: #cbd5e1;
+        }
+        .markdown-content code {
+            background-color: rgba(30, 41, 59, 0.9);
+            padding: 0.15rem 0.4rem;
+            border-radius: 0.375rem;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            font-size: 0.85em;
+            color: #e2e8f0;
+            border: 1px solid rgba(51, 65, 85, 0.7);
+        }
+        .markdown-content pre {
+            background-color: #0b1120;
+            border: 1px solid #1e293b;
+            border-radius: 0.5rem;
+            padding: 0.85rem;
+            overflow-x: auto;
+            margin-bottom: 0.75rem;
+        }
+        .markdown-content pre code {
+            background: transparent;
+            padding: 0;
+            border: none;
+            color: #cbd5e1;
+        }
+        .markdown-content blockquote {
+            border-left: 3px solid #6366f1;
+            padding-left: 0.85rem;
+            margin-left: 0;
+            margin-bottom: 0.75rem;
+            color: #94a3b8;
+            font-style: italic;
+        }
+        .markdown-content table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 0.75rem;
+            font-size: 0.85rem;
+        }
+        .markdown-content th, .markdown-content td {
+            border: 1px solid #334155;
+            padding: 0.45rem 0.7rem;
+            text-align: left;
+        }
+        .markdown-content th {
+            background-color: #1e293b;
+            color: #f8fafc;
+            font-weight: 600;
+        }
+        .markdown-content tr:nth-child(even) td {
+            background-color: rgba(30, 41, 59, 0.3);
+        }
+        .markdown-content hr {
+            border: 0;
+            border-top: 1px solid #334155;
+            margin: 1rem 0;
+        }
+
+        /* Mermaid Diagram & Flowchart Styles */
+        .mermaid-container {
+            width: 100%;
+            overflow-x: auto;
+        }
+        .mermaid {
+            font-family: 'Inter', sans-serif !important;
+            min-height: 140px;
+            overflow-x: auto;
+            overflow-y: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 0.75rem;
+            width: 100%;
+        }
+        .mermaid svg {
+            max-height: 520px !important;
+            height: auto !important;
+            width: auto !important;
+            min-width: 320px;
+            margin: 0 auto;
+            border-radius: 0.5rem;
+            display: block;
+        }
+    </style>
+</head>
+<body class="h-full bg-dark-bg text-slate-200 antialiased overflow-hidden select-none">
+
+    <!-- Ana Konteyner: 3 Panelli Grid/Flex Yapısı -->
+    <div class="h-screen w-screen flex flex-col md:flex-row overflow-hidden bg-[#090d16]">
+
+        <!-- ========================================================= -->
+        <!-- SOL PANEL: KAYNAKLAR & YÜKLENEN BELGELER (Akıllı Not Sol Panel) -->
+        <!-- ========================================================= -->
+        <aside class="w-full md:w-80 lg:w-84 bg-[#0d1322] border-r border-slate-800/80 flex flex-col flex-shrink-0 z-20">
+            <!-- Sol Başlık -->
+            <div class="p-4 border-b border-slate-800/80 flex items-center justify-between">
+                <div class="flex items-center gap-2.5">
+                    <div class="w-8 h-8 rounded-lg bg-gradient-to-tr from-indigo-600 to-violet-500 flex items-center justify-center shadow-lg shadow-indigo-500/20">
+                        <i class="fa-solid fa-graduation-cap text-white text-sm"></i>
+                    </div>
+                    <div>
+                        <h1 class="text-sm font-bold text-white tracking-wide flex items-center gap-1.5">
+                            Akıllı Not
+                            <span class="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-400 font-semibold border border-indigo-500/30">AI RAG</span>
+                        </h1>
+                        <p class="text-[11px] text-slate-400">Ders Notu Asistanı</p>
+                    </div>
+                </div>
+                <div class="flex items-center gap-1">
+                    <span class="relative flex h-2 w-2">
+                        <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                        <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                    </span>
+                    <span class="text-[10px] text-slate-400 font-mono">ChromaDB</span>
+                </div>
+            </div>
+
+            <!-- Kaynak Ekleme ve Yükleme Alanı -->
+            <div class="p-4 border-b border-slate-800/80">
+                <div class="flex items-center justify-between mb-2.5">
+                    <span class="text-xs font-semibold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                        <i class="fa-solid fa-cloud-arrow-up text-indigo-400"></i> Kaynak Ekle
+                    </span>
+                    <span class="text-[10px] text-slate-500 font-mono">PDF, Word, Excel, Görsel</span>
+                </div>
+
+                <!-- Gizli Input -->
+                <input type="file" id="fileInput" class="hidden" accept=".png,.jpg,.jpeg,.pdf,.docx,.xlsx,.csv" multiple onchange="handleFileSelect(this)">
+
+                <!-- Sürükle Bırak / Tıklama Kutusu -->
+                <div id="dropZone" onclick="document.getElementById('fileInput').click()" class="border-2 border-dashed border-slate-700/80 hover:border-indigo-500 bg-slate-900/60 hover:bg-slate-900 rounded-xl p-4 text-center cursor-pointer transition-all duration-200 group">
+                    <div class="w-10 h-10 rounded-full bg-indigo-500/10 text-indigo-400 flex items-center justify-center mx-auto mb-2 group-hover:scale-110 transition-transform">
+                        <i class="fa-solid fa-arrow-up-from-bracket text-base"></i>
+                    </div>
+                    <p class="text-xs font-medium text-slate-200" id="fileNameDisplay">Dosya Seçin veya Sürükleyin</p>
+                    <p class="text-[10px] text-slate-400 mt-0.5">Otomatik indekslenir ve analiz edilir</p>
+                </div>
+
+                <!-- Yükle Butonu -->
+                <button type="button" id="uploadBtn" onclick="handleFileUpload()" disabled class="w-full mt-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-semibold py-2 px-3 rounded-lg transition-all flex items-center justify-center gap-2 shadow-md shadow-indigo-600/20">
+                    <i class="fa-solid fa-bolt"></i> Analiz Et ve İndeksle
+                </button>
+
+                <!-- Durum Bildirimi -->
+                <div id="uploadStatus" class="hidden mt-2.5 text-xs text-center font-medium p-2 rounded-lg"></div>
+            </div>
+
+            <!-- YÜKLENEN BELGELER LİSTESİ -->
+            <div class="flex-1 overflow-y-auto p-4 space-y-2">
+                <div class="flex items-center justify-between mb-2">
+                    <h2 class="text-xs font-semibold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                        <i class="fa-solid fa-folder-open text-indigo-400 text-xs"></i>
+                        Yüklenen Belgeler
+                    </h2>
+                    <span id="uploadedDocCount" class="text-[10px] bg-slate-800 text-indigo-300 font-semibold px-2 py-0.5 rounded-full border border-slate-700/80">0</span>
+                </div>
+
+                <ul id="uploadedDocList" class="space-y-1.5">
+                    <li id="noDocsPlaceholder" class="text-xs text-slate-500 italic text-center py-6 bg-slate-900/40 rounded-xl border border-dashed border-slate-800/80 flex flex-col items-center gap-2">
+                        <i class="fa-solid fa-box-open text-slate-600 text-lg"></i>
+                        Henüz belge yüklenmedi
+                    </li>
+                </ul>
+            </div>
+
+            <!-- Sol Panel Alt: Hafızayı Temizle -->
+            <div class="p-3 border-t border-slate-800/80 bg-slate-900/40">
+                <button onclick="clearNotes()" class="w-full py-2 px-3 bg-red-950/40 hover:bg-red-900/60 border border-red-800/50 hover:border-red-700 text-red-300 rounded-lg text-xs font-medium transition-all flex items-center justify-center gap-2">
+                    <i class="fa-solid fa-trash-can text-red-400"></i>
+                    Hafızayı Temizle
+                </button>
+            </div>
+        </aside>
+
+        <!-- ========================================================= -->
+        <!-- ORTA PANEL: SOHBET & İNCELEME ALANI (Akıllı Not Chat Panel) -->
+        <!-- ========================================================= -->
+        <main class="flex-1 flex flex-col bg-[#0b101d] overflow-hidden relative">
+            <!-- Üst Çubuk -->
+            <header class="glass-header h-14 border-b border-slate-800/80 px-6 flex items-center justify-between flex-shrink-0 z-10">
+                <div class="flex items-center gap-3">
+                    <i class="fa-solid fa-comments text-indigo-400"></i>
+                    <h2 class="text-sm font-semibold text-white tracking-wide">Not İnceleme & Soru-Cevap</h2>
+                    <span id="activeDocTag" class="hidden text-[10px] bg-indigo-950/80 text-indigo-300 border border-indigo-800/50 px-2 py-0.5 rounded-full font-mono"></span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button onclick="clearChatHistory()" class="text-xs text-slate-400 hover:text-slate-200 px-2.5 py-1 rounded-md hover:bg-slate-800/60 transition" title="Sohbet Geçmişini Temizle">
+                        <i class="fa-solid fa-broom mr-1"></i> Sohbeti Temizle
+                    </button>
+                </div>
+            </header>
+
+            <!-- İçerik ve Sohbet Akış Alanı -->
+            <div class="flex-1 overflow-y-auto p-4 md:p-6 space-y-4" id="chatScroll">
+                
+                <!-- Gizli uyumluluk elemanı -->
+                <div id="contentArea" class="hidden"></div>
+
+                <!-- Sohbet Baloncukları -->
+                <div id="chatHistory" class="max-w-3xl mx-auto space-y-4 pb-2">
+                    <!-- Karşılama Mesajı -->
+                    <div class="flex gap-3">
+                        <div class="w-8 h-8 rounded-lg bg-gradient-to-tr from-indigo-600 to-violet-600 flex items-center justify-center flex-shrink-0 shadow-md">
+                            <i class="fa-solid fa-robot text-white text-xs"></i>
+                        </div>
+                        <div class="flex-1 bg-slate-900/90 border border-slate-800 rounded-2xl rounded-tl-sm p-4 text-xs sm:text-sm text-slate-200 shadow-sm select-text leading-relaxed">
+                            <p class="font-semibold text-indigo-400 mb-1">Merhaba! Ben Akıllı Not Asistanınızım.</p>
+                            <p class="text-slate-300">Ders notlarınızı (PDF, Word, Excel veya Görsel) sol panelden yükleyebilir, dilediğiniz soruyu sorabilir ya da sağdaki Studio araçlarıyla tek tıkla sınav tahmini, zihin haritası veya PowerPoint sunumu üretebilirsiniz.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Alt Kısım: Mesaj Giriş Alanı -->
+            <div class="p-4 border-t border-slate-800/80 bg-[#0d1322]/90 flex-shrink-0 z-10">
+                <div class="max-w-3xl mx-auto">
+                    <!-- Hızlı Soru Hapları -->
+                    <div class="flex items-center gap-2 mb-2.5 overflow-x-auto pb-1 text-[11px] text-slate-400">
+                        <span class="text-slate-500 font-medium whitespace-nowrap"><i class="fa-regular fa-lightbulb mr-1 text-amber-400"></i> Örnek:</span>
+                        <button onclick="quickPrompt('Bu notlardaki en önemli 3 temel kavram nedir?')" class="whitespace-nowrap px-2.5 py-1 bg-slate-800/80 hover:bg-slate-700/80 hover:text-white rounded-full border border-slate-700/60 transition">Temel Kavramlar</button>
+                        <button onclick="quickPrompt('Sınavda çıkabilecek formülleri ve kuralları listele.')" class="whitespace-nowrap px-2.5 py-1 bg-slate-800/80 hover:bg-slate-700/80 hover:text-white rounded-full border border-slate-700/60 transition">Formül & Kurallar</button>
+                        <button onclick="quickPrompt('Bu derste anlatılan konunun gerçek hayattaki uygulama alanları nelerdir?')" class="whitespace-nowrap px-2.5 py-1 bg-slate-800/80 hover:bg-slate-700/80 hover:text-white rounded-full border border-slate-700/60 transition">Uygulama Alanları</button>
+                    </div>
+
+                    <!-- Input Form -->
+                    <form id="chatForm" class="relative flex items-center">
+                        <textarea id="chatInput" rows="1" placeholder="Ders notları hakkında bir soru sorun (Enter ile gönder)..." class="w-full pl-4 pr-24 py-3 bg-slate-900 border border-slate-700/80 focus:border-indigo-500 rounded-xl text-xs sm:text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition resize-none"></textarea>
+                        
+                        <div class="absolute right-2.5 flex items-center gap-1.5">
+                            <button type="submit" id="sendBtn" class="w-8 h-8 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white flex items-center justify-center transition shadow-md shadow-indigo-600/30">
+                                <i class="fa-solid fa-arrow-up text-xs"></i>
+                            </button>
+                        </div>
+                    </form>
+                    <p class="text-[10px] text-slate-500 text-center mt-1.5 font-mono">Akıllı Not RAG tabanlı kaynaklı çıkarım motoru aktiftir.</p>
+                </div>
+            </div>
+        </main>
+
+        <!-- ========================================================= -->
+        <!-- SAĞ PANEL: STUDIO İŞLEMLERİ (Akıllı Not Studio Panel) -->
+        <!-- ========================================================= -->
+        <aside class="w-full md:w-80 lg:w-96 bg-[#0d1322] border-l border-slate-800/80 flex flex-col flex-shrink-0 z-20 overflow-y-auto">
+            <!-- Studio Başlığı -->
+            <div class="p-4 border-b border-slate-800/80 flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                    <div class="w-7 h-7 rounded-lg bg-indigo-500/10 text-indigo-400 flex items-center justify-center">
+                        <i class="fa-solid fa-wand-magic-sparkles text-sm"></i>
+                    </div>
+                    <div>
+                        <h2 class="text-sm font-bold text-white tracking-wide">Studio İşlemleri</h2>
+                        <p class="text-[11px] text-slate-400">Yapay Zeka Çalışma Araçları</p>
+                    </div>
+                </div>
+                <span class="text-[10px] font-semibold text-indigo-400 bg-indigo-950 border border-indigo-800 px-2 py-0.5 rounded-full font-mono">7 Araç</span>
+            </div>
+
+            <!-- Studio Araçları Grid Listesi -->
+            <div class="p-4 flex-1 space-y-3">
+
+                <!-- 1. Genel Özet -->
+                <div onclick="studioAction('summary')" class="studio-card p-3.5 rounded-xl bg-slate-900/90 border border-slate-800 hover:border-blue-500/60 cursor-pointer group">
+                    <div class="flex items-start gap-3">
+                        <div class="w-9 h-9 rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-400 flex items-center justify-center flex-shrink-0 group-hover:scale-110 transition-transform">
+                            <i class="fa-solid fa-align-left text-sm"></i>
+                        </div>
+                        <div class="flex-1">
+                            <div class="flex items-center justify-between">
+                                <h3 class="text-xs font-semibold text-white group-hover:text-blue-400 transition-colors">Genel Özet</h3>
+                                <i class="fa-solid fa-chevron-right text-[10px] text-slate-600 group-hover:text-blue-400 transition-colors"></i>
+                            </div>
+                            <p class="text-[11px] text-slate-400 mt-0.5">Tüm belgenin kapsamlı, maddeli özetini çıkarır.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 2. Sesli Dinle (TTS Podcast) -->
+                <div onclick="studioAction('audio')" class="studio-card p-3.5 rounded-xl bg-slate-900/90 border border-slate-800 hover:border-purple-500/60 cursor-pointer group">
+                    <div class="flex items-start gap-3">
+                        <div class="w-9 h-9 rounded-lg bg-purple-500/10 border border-purple-500/20 text-purple-400 flex items-center justify-center flex-shrink-0 group-hover:scale-110 transition-transform">
+                            <i class="fa-solid fa-headphones text-sm"></i>
+                        </div>
+                        <div class="flex-1">
+                            <div class="flex items-center justify-between">
+                                <h3 class="text-xs font-semibold text-white group-hover:text-purple-400 transition-colors">Sesli Dinle (Podcast)</h3>
+                                <i class="fa-solid fa-chevron-right text-[10px] text-slate-600 group-hover:text-purple-400 transition-colors"></i>
+                            </div>
+                            <p class="text-[11px] text-slate-400 mt-0.5">Son yanıtı veya özeti doğal Türkçe sesle MP3 yapar.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 3. Çalışma Sınavı (Quiz & Flashcards) -->
+                <div onclick="studioAction('quiz')" class="studio-card p-3.5 rounded-xl bg-slate-900/90 border border-slate-800 hover:border-emerald-500/60 cursor-pointer group">
+                    <div class="flex items-start gap-3">
+                        <div class="w-9 h-9 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center flex-shrink-0 group-hover:scale-110 transition-transform">
+                            <i class="fa-solid fa-clipboard-question text-sm"></i>
+                        </div>
+                        <div class="flex-1">
+                            <div class="flex items-center justify-between">
+                                <h3 class="text-xs font-semibold text-white group-hover:text-emerald-400 transition-colors">Çalışma Sınavı</h3>
+                                <i class="fa-solid fa-chevron-right text-[10px] text-slate-600 group-hover:text-emerald-400 transition-colors"></i>
+                            </div>
+                            <p class="text-[11px] text-slate-400 mt-0.5">Notlardan 5 soruluk çoktan seçmeli test üretir.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 4. Zihin Haritası (Mind Map / Hierarchy) -->
+                <div onclick="studioAction('mindmap')" class="studio-card p-3.5 rounded-xl bg-slate-900/90 border border-slate-800 hover:border-amber-500/60 cursor-pointer group">
+                    <div class="flex items-start gap-3">
+                        <div class="w-9 h-9 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400 flex items-center justify-center flex-shrink-0 group-hover:scale-110 transition-transform">
+                            <i class="fa-solid fa-sitemap text-sm"></i>
+                        </div>
+                        <div class="flex-1">
+                            <div class="flex items-center justify-between">
+                                <h3 class="text-xs font-semibold text-white group-hover:text-amber-400 transition-colors">Zihin Haritası</h3>
+                                <i class="fa-solid fa-chevron-right text-[10px] text-slate-600 group-hover:text-amber-400 transition-colors"></i>
+                            </div>
+                            <p class="text-[11px] text-slate-400 mt-0.5">Kavramların ana ve alt dallarını Mermaid.js ile görsel şemalaştırır.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 5. Kavram Sözlüğü (Glossary) -->
+                <div onclick="studioAction('glossary')" class="studio-card p-3.5 rounded-xl bg-slate-900/90 border border-slate-800 hover:border-cyan-500/60 cursor-pointer group">
+                    <div class="flex items-start gap-3">
+                        <div class="w-9 h-9 rounded-lg bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 flex items-center justify-center flex-shrink-0 group-hover:scale-110 transition-transform">
+                            <i class="fa-solid fa-book-bookmark text-sm"></i>
+                        </div>
+                        <div class="flex-1">
+                            <div class="flex items-center justify-between">
+                                <h3 class="text-xs font-semibold text-white group-hover:text-cyan-400 transition-colors">Kavram Sözlüğü</h3>
+                                <i class="fa-solid fa-chevron-right text-[10px] text-slate-600 group-hover:text-cyan-400 transition-colors"></i>
+                            </div>
+                            <p class="text-[11px] text-slate-400 mt-0.5">Önemli terimleri, tanımları ve formülleri derler.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 6. Sınav Tahmini (Exam Predictions) -->
+                <div onclick="studioAction('exam')" class="studio-card p-3.5 rounded-xl bg-slate-900/90 border border-slate-800 hover:border-rose-500/60 cursor-pointer group">
+                    <div class="flex items-start gap-3">
+                        <div class="w-9 h-9 rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-400 flex items-center justify-center flex-shrink-0 group-hover:scale-110 transition-transform">
+                            <i class="fa-solid fa-bullseye text-sm"></i>
+                        </div>
+                        <div class="flex-1">
+                            <div class="flex items-center justify-between">
+                                <h3 class="text-xs font-semibold text-white group-hover:text-rose-400 transition-colors">Sınav Tahmini</h3>
+                                <i class="fa-solid fa-chevron-right text-[10px] text-slate-600 group-hover:text-rose-400 transition-colors"></i>
+                            </div>
+                            <p class="text-[11px] text-slate-400 mt-0.5">Vize/finalde çıkması muhtemel soruları tespit eder.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 7. PowerPoint Sunumu -->
+                <div onclick="studioAction('presentation')" class="studio-card p-3.5 rounded-xl bg-slate-900/90 border border-slate-800 hover:border-orange-500/60 cursor-pointer group">
+                    <div class="flex items-start gap-3">
+                        <div class="w-9 h-9 rounded-lg bg-orange-500/10 border border-orange-500/20 text-orange-400 flex items-center justify-center flex-shrink-0 group-hover:scale-110 transition-transform">
+                            <i class="fa-solid fa-file-powerpoint text-sm"></i>
+                        </div>
+                        <div class="flex-1">
+                            <div class="flex items-center justify-between">
+                                <h3 class="text-xs font-semibold text-white group-hover:text-orange-400 transition-colors">PowerPoint Sunumu</h3>
+                                <i class="fa-solid fa-chevron-right text-[10px] text-slate-600 group-hover:text-orange-400 transition-colors"></i>
+                            </div>
+                            <p class="text-[11px] text-slate-400 mt-0.5">Notlardan profesyonel .pptx slayt dosyası üretir.</p>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- Ses Oynatıcı Paneli (Audio Summary Oluştuğunda Görünür) -->
+            <div id="audioPlayerContainer" class="p-4 bg-slate-900/90 border-t border-slate-800/80 hidden">
+                <div class="flex items-center justify-between mb-2">
+                    <span class="text-xs font-semibold text-purple-300 flex items-center gap-1.5">
+                        <i class="fa-solid fa-circle-play text-purple-400"></i> Seslendirildi (Edge-TTS)
+                    </span>
+                    <a id="audioDownloadLink" href="#" download class="text-[10px] text-slate-400 hover:text-white" title="İndir">
+                        <i class="fa-solid fa-download"></i>
+                    </a>
+                </div>
+                <audio id="audioPlayer" controls class="w-full h-8 rounded-lg bg-slate-800"></audio>
+            </div>
+        </aside>
+
+    </div>
+
+    <!-- ========================================================= -->
+    <!-- JAVASCRIPT LOGIC & API ENTEGRASYONU -->
+    <!-- ========================================================= -->
+    <script>
+        // API Base URL tespiti: Tarayıcı dosya sisteminden (file://) veya Live Server (port 5500) üzerinden açıldığında backend portuna (8000) yönlendirir
+        const API_BASE = (window.location.protocol === 'file:' || (window.location.port && window.location.port !== '8000'))
+            ? 'http://127.0.0.1:8000'
+            : '';
+
+        let lastBotMessage = "Sisteme henüz bir ders notu yüklenmedi veya işlem yapılmadı.";
+        let selectedFiles = [];
+
+        // Dosya Seçim Olayı (Çoklu Dosya Destekli)
+        function handleFileSelect(input) {
+            if (input.files && input.files.length > 0) {
+                selectedFiles = Array.from(input.files);
+                const display = document.getElementById('fileNameDisplay');
+                if (selectedFiles.length === 1) {
+                    display.innerText = selectedFiles[0].name;
+                } else {
+                    display.innerText = `${selectedFiles.length} dosya seçildi`;
+                }
+                document.getElementById('uploadBtn').disabled = false;
+                
+                const dropZone = document.getElementById('dropZone');
+                dropZone.classList.add('border-indigo-500', 'bg-indigo-500/10');
+            }
+        }
+
+        // Drag & Drop Desteği
+        const dropZone = document.getElementById('dropZone');
+        ['dragenter', 'dragover'].forEach(name => {
+            dropZone.addEventListener(name, (e) => {
+                e.preventDefault();
+                dropZone.classList.add('border-indigo-400', 'bg-slate-800');
+            });
+        });
+        ['dragleave', 'drop'].forEach(name => {
+            dropZone.addEventListener(name, (e) => {
+                e.preventDefault();
+                dropZone.classList.remove('border-indigo-400', 'bg-slate-800');
+            });
+        });
+        dropZone.addEventListener('drop', (e) => {
+            if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                const input = document.getElementById('fileInput');
+                input.files = e.dataTransfer.files;
+                handleFileSelect(input);
+            }
+        });
+
+        // Çoklu Dosya Yükleme Fonksiyonu (Sırasıyla backend'e gönderir ve listeye ekler)
+        async function handleFileUpload() {
+            if (!selectedFiles || selectedFiles.length === 0) return;
+
+            const status = document.getElementById('uploadStatus');
+            const btn = document.getElementById('uploadBtn');
+            const totalFiles = selectedFiles.length;
+
+            btn.disabled = true;
+            status.classList.remove('hidden', 'bg-red-950/60', 'text-red-300', 'bg-emerald-950/60', 'text-emerald-300', 'border-red-800/50', 'border-emerald-800/50');
+            status.classList.add('block', 'bg-amber-950/60', 'text-amber-300', 'border', 'border-amber-800/50');
+
+            let successCount = 0;
+            let failCount = 0;
+            let totalChunks = 0;
+
+            for (let i = 0; i < totalFiles; i++) {
+                const file = selectedFiles[i];
+                const ext = file.name.split('.').pop().toLowerCase();
+
+                status.innerHTML = `<i class="fa-solid fa-spinner fa-spin mr-1.5"></i> [${i + 1}/${totalFiles}] "${file.name}" analiz ediliyor...`;
+
+                const formData = new FormData();
+                formData.append('file', file);
+
+                let endpoint = "";
+                if (["png", "jpg", "jpeg"].includes(ext)) {
+                    endpoint = "/summarize-image";
+                    formData.append("auto_index_rag", "true");
+                } else if (ext === "pdf") {
+                    endpoint = "/index-pdf";
+                } else if (ext === "docx") {
+                    endpoint = "/index-docx";
+                } else if (["xlsx", "csv", "xls"].includes(ext)) {
+                    endpoint = "/index-excel";
+                } else {
+                    addMessage(`⚠️ **${file.name}**: Desteklenmeyen dosya formatı atlandı.`, 'bot');
+                    failCount++;
+                    continue;
+                }
+
+                try {
+                    const response = await fetch(API_BASE + endpoint, {
+                        method: 'POST',
+                        body: formData
+                    });
+                    const data = await response.json();
+
+                    if (response.ok) {
+                        const chunksAdded = data.chunks_added || 0;
+                        totalChunks += chunksAdded;
+                        successCount++;
+
+                        // Sol paneldeki listeye sırasıyla ekle
+                        addUploadedDoc(file.name, chunksAdded);
+
+                        if (data.summary) {
+                            lastBotMessage = data.summary;
+                        } else if (data.message) {
+                            lastBotMessage = data.message;
+                        }
+
+                        // Chat alanına bilgilendirici mesaj ekle
+                        addMessage(`📄 **${file.name}** başarıyla yüklendi ve indekslendi (${chunksAdded} parça).`, 'bot');
+                    } else {
+                        failCount++;
+                        addMessage(`❌ **${file.name}** yüklenemedi: ${data.detail || "Sunucu hatası"}`, 'bot');
+                    }
+                } catch (err) {
+                    failCount++;
+                    addMessage(`❌ **${file.name}** yüklenirken bağlantı hatası oluştu: ${err.message}`, 'bot');
+                }
+            }
+
+            // Durum özetini göster
+            if (successCount > 0 && failCount === 0) {
+                status.className = "mt-2.5 text-xs text-center font-medium p-2 rounded-lg bg-emerald-950/60 text-emerald-300 border border-emerald-800/50 block";
+                status.innerHTML = `<i class="fa-solid fa-circle-check mr-1"></i> ${successCount} dosya başarıyla indekslendi! (${totalChunks} parça)`;
+            } else if (successCount > 0 && failCount > 0) {
+                status.className = "mt-2.5 text-xs text-center font-medium p-2 rounded-lg bg-amber-950/60 text-amber-300 border border-amber-800/50 block";
+                status.innerHTML = `<i class="fa-solid fa-triangle-exclamation mr-1"></i> ${successCount} başarılı, ${failCount} hatalı dosya.`;
+            } else {
+                status.className = "mt-2.5 text-xs text-center font-medium p-2 rounded-lg bg-red-950/60 text-red-300 border border-red-800/50 block";
+                status.innerHTML = `<i class="fa-solid fa-circle-xmark mr-1"></i> Dosyalar yüklenemedi.`;
+            }
+
+            // Input ve seçim durumunu sıfırla
+            selectedFiles = [];
+            const fileInput = document.getElementById('fileInput');
+            if (fileInput) fileInput.value = '';
+            document.getElementById('fileNameDisplay').innerText = "Dosya Seçin veya Sürükleyin";
+            document.getElementById('dropZone').classList.remove('border-indigo-500', 'bg-indigo-500/10');
+            btn.disabled = true;
+        }
+
+        // Geriye dönük uyumluluk için alias
+        const submitFile = handleFileUpload;
+
+        // Yüklenen Belgeyi Listeye Ekle
+        function addUploadedDoc(fileName, chunkCount) {
+            const list = document.getElementById('uploadedDocList');
+            const placeholder = document.getElementById('noDocsPlaceholder');
+            if (placeholder) placeholder.remove();
+
+            const ext = fileName.split('.').pop().toLowerCase();
+            let iconClass = "fa-solid fa-file-lines text-slate-400";
+            let badgeStyle = "bg-slate-800 text-slate-300 border-slate-700";
+
+            if (ext === "pdf") {
+                iconClass = "fa-solid fa-file-pdf text-rose-400";
+                badgeStyle = "bg-rose-950/60 text-rose-300 border-rose-800/50";
+            } else if (ext === "docx") {
+                iconClass = "fa-solid fa-file-word text-blue-400";
+                badgeStyle = "bg-blue-950/60 text-blue-300 border-blue-800/50";
+            } else if (["xlsx", "csv", "xls"].includes(ext)) {
+                iconClass = "fa-solid fa-file-excel text-emerald-400";
+                badgeStyle = "bg-emerald-950/60 text-emerald-300 border-emerald-800/50";
+            } else if (["png", "jpg", "jpeg"].includes(ext)) {
+                iconClass = "fa-solid fa-file-image text-purple-400";
+                badgeStyle = "bg-purple-950/60 text-purple-300 border-purple-800/50";
+            }
+
+            const chunkText = (typeof chunkCount === 'number' && chunkCount > 0) ? `${chunkCount} p.` : 'Aktif';
+
+            const li = document.createElement('li');
+            li.className = "flex items-center justify-between p-2.5 rounded-xl bg-slate-900/90 border border-slate-800 hover:border-slate-700 transition text-xs shadow-sm";
+            li.innerHTML = `
+                <div class="flex items-center gap-2.5 overflow-hidden mr-2">
+                    <div class="w-7 h-7 rounded-lg bg-slate-950 flex items-center justify-center flex-shrink-0">
+                        <i class="${iconClass} text-sm"></i>
+                    </div>
+                    <div class="overflow-hidden">
+                        <p class="text-xs font-medium text-slate-200 truncate" title="${fileName}">${fileName}</p>
+                        <p class="text-[10px] text-slate-500 font-mono">ChromaDB Aktif</p>
+                    </div>
+                </div>
+                <span class="text-[10px] px-2 py-0.5 rounded-md border ${badgeStyle} font-medium flex-shrink-0 flex items-center gap-1 font-mono">
+                    <i class="fa-solid fa-check text-[9px]"></i> ${chunkText}
+                </span>
+            `;
+            list.appendChild(li);
+
+            // Sayaç güncelle
+            const badge = document.getElementById('uploadedDocCount');
+            if (badge) {
+                badge.textContent = list.querySelectorAll('li').length;
+            }
+        }
+
+        // Sohbet Formu Gönderimi
+        document.getElementById('chatForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const input = document.getElementById('chatInput');
+            const message = input.value.trim();
+            if (!message) return;
+
+            addMessage(message, 'user');
+            input.value = '';
+            input.style.height = 'auto';
+
+            // Bot yükleniyor balonu
+            const loadingId = addLoadingMessage();
+
+            try {
+                const response = await fetch(API_BASE + '/ask-notes', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ question: message, n_results: 3, max_tokens: 2048 })
+                });
+
+                removeMessage(loadingId);
+                const data = await response.json();
+
+                if (response.ok) {
+                    lastBotMessage = data.answer;
+                    addMessage(data.answer, 'bot', data.sources);
+                } else {
+                    addMessage(`⚠️ **Hata:** ${data.detail || 'Bir sorun oluştu.'}`, 'bot');
+                }
+            } catch (err) {
+                removeMessage(loadingId);
+                addMessage("⚠️ **Bağlantı Hatası:** Sunucuya ulaşılamadı. Lütfen backend'in çalıştığından emin olun.", 'bot');
+            }
+        });
+
+        // Hızlı Soru Gönderimi
+        function quickPrompt(text) {
+            document.getElementById('chatInput').value = text;
+            document.getElementById('chatForm').dispatchEvent(new Event('submit'));
+        }
+
+        // Marked.js Ayarları
+        if (typeof marked !== 'undefined') {
+            marked.setOptions({
+                breaks: false,
+                gfm: true
+            });
+        }
+
+        // PDF metinlerindeki tekil satır sonlarını birleştirir;
+        // listeleri (- , * , • , 1.), başlıkları (#) ve kod bloklarını korur
+        function cleanMarkdownText(text) {
+            if (!text || typeof text !== 'string') return '';
+
+            // Satır sonlarını \n formatına normalize et
+            let str = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+
+            // Kod bloklarını (```...```) geçici korumaya al
+            const codeBlocks = [];
+            str = str.replace(/```[\s\S]*?```/g, (match) => {
+                codeBlocks.push(match);
+                return `__CODE_BLOCK_${codeBlocks.length - 1}__`;
+            });
+
+            // Kullanıcı kuralı: her • işaretini yeni satırda düzgün bir Markdown maddesine (\n- ) çevir
+            str = str.replace(/[•●▪]\s*/g, '\n- ');
+
+            // Paragraflara ayır (çift satır sonları \n\n+ korunur)
+            const paragraphs = str.split(/\n{2,}/);
+
+            const cleanedParagraphs = paragraphs.map(para => {
+                const lines = para.split('\n');
+                if (lines.length <= 1) return para;
+
+                let result = [];
+                for (let i = 0; i < lines.length; i++) {
+                    const line = lines[i];
+                    const trimmed = line.trim();
+
+                    if (!trimmed) continue;
+
+                    if (result.length === 0) {
+                        result.push(line);
+                        continue;
+                    }
+
+                    const prevLine = lines[i - 1] || '';
+
+                    // Özel satır kontrolleri: liste maddesi (- , * , + , • , 1.), başlık, alıntı, tablo
+                    const isSpecial = /^(\s*[-*+•●▪]\s|\s*\d+[\.\)]\s|\s*#{1,6}\s|\s*>|\s*\|)/.test(line);
+                    const prevIsHeader = /^(\s*#{1,6}\s)/.test(prevLine);
+                    const prevIsList = /^(\s*[-*+•●▪]\s|\s*\d+[\.\)]\s)/.test(prevLine);
+                    const prevEndsWithBreak = prevLine.endsWith('  ') || prevLine.endsWith('\\');
+
+                    if (isSpecial || prevIsHeader || prevIsList || prevEndsWithBreak) {
+                        // Yeni satır olarak korunması gereken durum (özellikle listeler alt alta kalmalı)
+                        result.push('\n' + line);
+                    } else {
+                        // Cümle içi tekil satır kırılması: boşluk ile birleştir
+                        result.push(' ' + trimmed);
+                    }
+                }
+                return result.join('');
+            });
+
+            str = cleanedParagraphs.join('\n\n');
+
+            // Kod bloklarını geri yükle
+            str = str.replace(/__CODE_BLOCK_(\d+)__/g, (_, idx) => codeBlocks[Number(idx)]);
+
+            return str.trim();
+        }
+
+        // HTML kaçış fonksiyonu
+        function escapeHtml(text) {
+            if (!text) return '';
+            return text
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+
+        // Mermaid Diyagram Kodunu Ayıklayıcı ve Sözdizimi Temizleyici (Flowchart LR & Mindmap Uyumlu)
+        function extractMermaidCode(text) {
+            if (!text || typeof text !== 'string') return 'flowchart LR\n    ROOT(["📘 Ders Notları"])';
+            
+            // Markdown kod blok işaretlerini ve etiketleri temizle
+            let code = text.replace(/```(?:mermaid|mindmap|flowchart|graph)?/gi, '').replace(/```/g, '').trim();
+
+            // flowchart veya graph kontrolü (flowchart LR, flowchart TD, graph LR, vb.)
+            const flowMatch = code.match(/\b(flowchart\s+[A-Za-z]+|flowchart|graph\s+[A-Za-z]+|graph)\b/i);
+            const mindmapMatch = code.match(/\bmindmap\b/i);
+
+            // 1. Flowchart / Graph formatı tespit edildiyse:
+            if (flowMatch && (!mindmapMatch || flowMatch.index <= mindmapMatch.index)) {
+                let flowCode = code.slice(flowMatch.index).trim();
+                const lines = flowCode.split('\n');
+                const validLines = [];
+
+                for (let i = 0; i < lines.length; i++) {
+                    const line = lines[i];
+                    const trimmedLine = line.trim();
+                    if (!trimmedLine) continue;
+
+                    // İlk satır: flowchart LR veya graph LR
+                    if (validLines.length === 0) {
+                        validLines.push(trimmedLine);
+                        continue;
+                    }
+
+                    // Eğer şema bittikten sonra açıklama/sohbet/kaynakça metni eklenmişse kes
+                    if (/^(?:[#*•\-]|not|özet|kaynakça|ders notlar|soru|açıklama)/i.test(trimmedLine) && 
+                        !trimmedLine.includes('-->') && !trimmedLine.includes('---') && !trimmedLine.startsWith('classDef') && !trimmedLine.startsWith('class ')) {
+                        break;
+                    }
+
+                    validLines.push(line);
+                }
+
+                if (validLines.length > 1) {
+                    return validLines.join('\n');
+                }
+                return flowCode;
+            }
+
+            // 2. Mindmap formatı tespit edildiyse:
+            if (mindmapMatch) {
+                let mmCode = code.slice(mindmapMatch.index).trim();
+                const lines = mmCode.split('\n');
+                const cleanedLines = [];
+                let isFirstLine = true;
+                let rootAdded = false;
+
+                for (let i = 0; i < lines.length; i++) {
+                    const rawLine = lines[i];
+                    if (!rawLine.trim()) continue;
+
+                    if (isFirstLine) {
+                        cleanedLines.push('mindmap');
+                        isFirstLine = false;
+                        continue;
+                    }
+
+                    // Eğer sonradan açıklama metni geldiyse haritayı bitir
+                    if (!rawLine.startsWith(' ') && !rawLine.startsWith('\t') && cleanedLines.length > 2) {
+                        break;
+                    }
+
+                    const indentMatch = rawLine.match(/^(\s*)/);
+                    const indent = indentMatch ? indentMatch[1].replace(/\t/g, '  ') : '  ';
+                    let content = rawLine.trim();
+
+                    // Madde imlerini temizle
+                    content = content.replace(/^[-*•]\s+/, '').replace(/^\d+[\.)]\s+/, '');
+
+                    if (!rootAdded && (content.toLowerCase().startsWith('root') || cleanedLines.length === 1)) {
+                        rootAdded = true;
+                        if (content.toLowerCase().startsWith('root')) {
+                            content = content.replace(/^root\s*\(\(\s*(.*?)\s*\)\)/i, (m, t) => `root((${t.replace(/[()[\]{}"'`:]/g, ' ').trim()}))`)
+                                             .replace(/^root\s*\[\s*(.*?)\s*\]/i, (m, t) => `root([${t.replace(/[()[\]{}"'`:]/g, ' ').trim()}])`);
+                            cleanedLines.push('  ' + content);
+                        } else {
+                            cleanedLines.push('  root((Ders Notları))');
+                            let safeChild = content.replace(/[()[\]{}"'`:]/g, ' ').replace(/\s+/g, ' ').trim();
+                            if (safeChild) {
+                                cleanedLines.push('    ' + safeChild);
+                            }
+                        }
+                        continue;
+                    }
+
+                    content = content.replace(/[()[\]{}"'`:]/g, ' ').replace(/\s+/g, ' ').trim();
+                    if (content) {
+                        const safeIndent = indent.length >= 2 ? indent : '    ';
+                        cleanedLines.push(safeIndent + content);
+                    }
+                }
+
+                if (cleanedLines.length > 1) {
+                    return cleanedLines.join('\n');
+                }
+            }
+
+            // 3. Fallback: İçinde ok '-->' veya düğüm tanımı varsa flowchart LR olarak dönüştür
+            if (code.includes('-->') || code.includes('---')) {
+                return 'flowchart LR\n' + code;
+            }
+
+            return 'flowchart LR\n    ROOT(["📘 Ders Notları"])\n    ROOT --> M1(["Temel Kavramlar"])\n    ROOT --> M2(["Yöntem ve İlkeler"])';
+        }
+
+        // Mermaid Şemasını Ekranda Render Eden Fonksiyon
+        async function triggerMermaidRender() {
+            if (typeof mermaid === 'undefined') return;
+            try {
+                // DOM elemanının tam yerleşmesi için kısa bekleme
+                await new Promise(r => setTimeout(r, 60));
+                await mermaid.run({
+                    querySelector: '.mermaid:not([data-processed="true"])'
+                });
+            } catch (e) {
+                console.warn("Mermaid run uyarısı:", e);
+            } finally {
+                // Şema çizildikten hemen sonra sohbet penceresi otomatik olarak en aşağıya kaysın
+                scrollChatToBottom();
+            }
+        }
+
+        // Markdown Metnini HTML'e Çeviren Ana Fonksiyon (marked.parse & Mermaid Flowchart/Mindmap Uyumlu)
+        function renderMarkdown(text) {
+            if (!text) return '';
+            const trimmed = text.trim();
+
+            // Eğer metin doğrudan bir flowchart, graph, mindmap kodu ise veya mermaid bloğuyla başlıyorsa
+            if (/^(?:flowchart|graph|mindmap)\b/i.test(trimmed) || trimmed.startsWith('```mermaid') || trimmed.startsWith('```mindmap') || trimmed.startsWith('```flowchart')) {
+                const mermaidCode = extractMermaidCode(trimmed);
+                return `<div class="mermaid-container w-full overflow-x-auto my-3"><div class="mermaid bg-slate-900/60 p-4 rounded-xl border border-gray-700 min-w-full flex justify-center text-center">\n${mermaidCode}\n</div></div>`;
+            }
+
+            // Metin içinde gömülü ```mermaid ... ``` bloğu varsa onu da div.mermaid'e dönüştür
+            let processed = text.replace(/```(?:mermaid|mindmap|flowchart|graph)\s*([\s\S]*?)```/gi, (match, innerCode) => {
+                const cleanCode = extractMermaidCode(innerCode.trim());
+                return `\n\n<div class="mermaid-container w-full overflow-x-auto my-3"><div class="mermaid bg-slate-900/60 p-4 rounded-xl border border-gray-700 min-w-full flex justify-center text-center">\n${cleanCode}\n</div></div>\n\n`;
+            });
+
+            const cleaned = cleanMarkdownText(processed);
+            if (typeof marked !== 'undefined' && typeof marked.parse === 'function') {
+                try {
+                    return marked.parse(cleaned);
+                } catch (e) {
+                    console.error("Marked render hatası:", e);
+                }
+            }
+            return formatMarkdown(cleaned);
+        }
+
+        // Basit Markdown Biçimlendirici (Yedek)
+        function formatMarkdown(text) {
+            let escaped = escapeHtml(text);
+            escaped = escaped.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+            escaped = escaped.replace(/^[•\-\*]\s+(.*)$/gm, '<li class="ml-4 list-disc">$1</li>');
+            escaped = escaped.replace(/\n\n/g, '<br><br>');
+            escaped = escaped.replace(/\n/g, '<br>');
+            return escaped;
+        }
+
+        // Mesaj Ekleme
+        function addMessage(text, sender, sources = []) {
+            const history = document.getElementById('chatHistory');
+            const isUser = sender === 'user';
+            const msgDiv = document.createElement('div');
+            msgDiv.className = `flex gap-3 ${isUser ? 'flex-row-reverse' : ''}`;
+
+            const avatar = isUser
+                ? `<div class="w-8 h-8 rounded-lg bg-slate-800 border border-slate-700 flex items-center justify-center flex-shrink-0 text-slate-300"><i class="fa-solid fa-user text-xs"></i></div>`
+                : `<div class="w-8 h-8 rounded-lg bg-gradient-to-tr from-indigo-600 to-violet-600 flex items-center justify-center flex-shrink-0 text-white shadow-md"><i class="fa-solid fa-robot text-xs"></i></div>`;
+
+            let formattedText = isUser
+                ? escapeHtml(text).replace(/\n/g, '<br>')
+                : renderMarkdown(text);
+
+            let sourcesHtml = "";
+            if (sources && sources.length > 0) {
+                sourcesHtml = `<div class="mt-3 pt-2.5 border-t border-slate-800/80">
+                    <p class="text-[10px] font-semibold text-slate-400 mb-1.5 uppercase tracking-wider flex items-center gap-1">
+                        <i class="fa-solid fa-quote-left text-indigo-400"></i> Alıntılanan Kaynaklar:
+                    </p>
+                    <div class="flex flex-wrap gap-1.5">`;
+                sources.forEach(src => {
+                    const pageText = src.page ? ` (s. ${src.page})` : '';
+                    sourcesHtml += `<span class="text-[10px] bg-slate-950/80 text-slate-300 border border-slate-800 px-2 py-0.5 rounded-md font-mono" title="${escapeHtml(src.snippet || '')}">${escapeHtml(src.source)}${pageText}</span>`;
+                });
+                sourcesHtml += `</div></div>`;
+            }
+
+            const bubbleClass = isUser
+                ? "bg-indigo-600 text-white rounded-2xl rounded-tr-sm shadow-md"
+                : "bg-slate-900/90 border border-slate-800 text-slate-200 rounded-2xl rounded-tl-sm shadow-sm";
+
+            msgDiv.innerHTML = `
+                ${avatar}
+                <div class="max-w-[85%] ${bubbleClass} p-4 text-xs sm:text-sm select-text leading-relaxed markdown-content">
+                    ${formattedText}
+                    ${sourcesHtml}
+                </div>
+            `;
+            history.appendChild(msgDiv);
+            scrollChatToBottom();
+
+            // Eğer mesaj içinde mermaid şeması varsa çizimi tetikle
+            if (msgDiv.querySelector('.mermaid')) {
+                triggerMermaidRender();
+            }
+        }
+
+        function addLoadingMessage() {
+            const history = document.getElementById('chatHistory');
+            const id = "loading-" + Date.now();
+            const msgDiv = document.createElement('div');
+            msgDiv.id = id;
+            msgDiv.className = "flex gap-3";
+            msgDiv.innerHTML = `
+                <div class="w-8 h-8 rounded-lg bg-gradient-to-tr from-indigo-600 to-violet-600 flex items-center justify-center flex-shrink-0 text-white shadow-md">
+                    <i class="fa-solid fa-robot text-xs"></i>
+                </div>
+                <div class="bg-slate-900/90 border border-slate-800 rounded-2xl rounded-tl-sm p-4 text-xs text-slate-400 flex items-center gap-2">
+                    <span class="w-2 h-2 rounded-full bg-indigo-400 animate-dot"></span>
+                    <span class="w-2 h-2 rounded-full bg-indigo-400 animate-dot" style="animation-delay: 0.2s"></span>
+                    <span class="w-2 h-2 rounded-full bg-indigo-400 animate-dot" style="animation-delay: 0.4s"></span>
+                    <span class="ml-1 text-slate-400">Ders notları taranıyor ve yanıt üretiliyor...</span>
+                </div>
+            `;
+            history.appendChild(msgDiv);
+            scrollChatToBottom();
+            return id;
+        }
+
+        function removeMessage(id) {
+            const el = document.getElementById(id);
+            if (el) el.remove();
+        }
+
+        function scrollChatToBottom() {
+            const container = document.getElementById('chatScroll');
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function clearChatHistory() {
+            document.getElementById('chatHistory').innerHTML = `
+                <div class="flex gap-3">
+                    <div class="w-8 h-8 rounded-lg bg-gradient-to-tr from-indigo-600 to-violet-600 flex items-center justify-center flex-shrink-0 shadow-md">
+                        <i class="fa-solid fa-robot text-white text-xs"></i>
+                    </div>
+                    <div class="flex-1 bg-slate-900/90 border border-slate-800 rounded-2xl rounded-tl-sm p-4 text-xs sm:text-sm text-slate-200 shadow-sm select-text leading-relaxed">
+                        <p class="font-semibold text-indigo-400 mb-1">Sohbet sıfırlandı.</p>
+                        <p class="text-slate-300">Ders notlarınız hakkındaki sorularınızı sormaya devam edebilirsiniz.</p>
+                    </div>
+                </div>
+            `;
+        }
+
+        // =========================================================
+        // STUDIO ACTIONS (Sağ Paneldeki 7 İşlem Butonunun Fonksiyonları)
+        // =========================================================
+        async function studioAction(type) {
+            switch(type) {
+                case 'summary':
+                    await runGeneralSummary();
+                    break;
+                case 'audio':
+                    await runAudioOverview();
+                    break;
+                case 'quiz':
+                    await runStudyQuiz();
+                    break;
+                case 'mindmap':
+                    await generateMindmap();
+                    break;
+                case 'glossary':
+                    await runGlossary();
+                    break;
+                case 'exam':
+                    await runExamPrediction();
+                    break;
+                case 'presentation':
+                    await runGeneratePresentation();
+                    break;
+            }
+        }
+
+        // 1. Genel Özet
+        async function runGeneralSummary() {
+            showContent("Genel Belge Özeti", "fa-solid fa-align-left text-blue-400", "Ders notları taranıyor ve kapsamlı özet hazırlanıyor...");
+            try {
+                const response = await fetch(API_BASE + '/ask-notes', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        question: 'Lütfen sisteme yüklenen bu belgenin genel, anlaşılır ve kapsamlı bir özetini maddeler halinde çıkar.',
+                        n_results: 5,
+                        max_tokens: 2048
+                    })
+                });
+                const data = await response.json();
+                if (response.ok) {
+                    showContent("Genel Belge Özeti", "fa-solid fa-align-left text-blue-400", renderMarkdown(data.answer));
+                    lastBotMessage = data.answer;
+                } else {
+                    showContent("Hata", "fa-solid fa-circle-exclamation text-red-400", `<p class="text-red-400">${data.detail || "Özet üretilemedi."}</p>`);
+                }
+            } catch (err) {
+                showContent("Hata", "fa-solid fa-circle-exclamation text-red-400", "Bağlantı hatası: Özet servisine ulaşılamadı.");
+            }
+        }
+
+        // 2. Sesli Dinle (Edge-TTS)
+        async function runAudioOverview() {
+            showContent("Ses Dosyası Hazırlanıyor...", "fa-solid fa-headphones text-purple-400", "Yapay zeka Türkçe ses modeli ile ses dosyası oluşturuluyor, lütfen bekleyin...");
+            try {
+                const response = await fetch(API_BASE + '/audio-summary', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        text: lastBotMessage,
+                        voice: "tr-TR-EmelNeural"
+                    })
+                });
+                const data = await response.json();
+                if (response.ok) {
+                    const playerContainer = document.getElementById('audioPlayerContainer');
+                    const player = document.getElementById('audioPlayer');
+                    const downloadLink = document.getElementById('audioDownloadLink');
+
+                    const audioSrc = data.audio_url.startsWith('http') ? data.audio_url : (API_BASE + data.audio_url);
+                    player.src = audioSrc;
+                    downloadLink.href = audioSrc;
+                    playerContainer.classList.remove('hidden');
+
+                    showContent(
+                        "Sesli Özet Hazır!", 
+                        "fa-solid fa-headphones text-purple-400", 
+                        `<div class="space-y-3">
+                            <p class="text-emerald-400 font-medium"><i class="fa-solid fa-circle-check mr-1"></i> Ses başarıyla oluşturuldu.</p>
+                            <p class="text-slate-300 text-xs">Sağ panelin altındaki ses oynatıcıdan dinleyebilir veya aşağıdaki oynatıcıyı kullanabilirsiniz:</p>
+                            <audio controls src="${audioSrc}" class="w-full h-9 rounded-lg bg-slate-800" autoplay></audio>
+                        </div>`
+                    );
+                } else {
+                    showContent("Seslendirme Hatası", "fa-solid fa-circle-exclamation text-red-400", `<p class="text-red-400">${data.detail || "Ses üretilemedi."}</p>`);
+                }
+            } catch (err) {
+                showContent("Hata", "fa-solid fa-circle-exclamation text-red-400", "Ses API'sine bağlanılamadı.");
+            }
+        }
+
+        // 3. Çalışma Sınavı (Quiz)
+        async function runStudyQuiz() {
+            showContent("Çalışma Sınavı Hazırlanıyor...", "fa-solid fa-clipboard-question text-emerald-400", "Ders notlarından çoktan seçmeli sorular üretiliyor...");
+            try {
+                const response = await fetch(API_BASE + '/generate-quiz', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ num_questions: 5 })
+                });
+                const data = await response.json();
+                if (response.ok && data.quiz) {
+                    let html = `<div class="space-y-4">
+                        <div class="flex items-center justify-between pb-2 border-b border-slate-800">
+                            <span class="text-xs font-semibold text-emerald-400 uppercase tracking-wider">5 Soruluk İnteraktif Test</span>
+                            <span class="text-[10px] text-slate-400 font-mono">Toplam: ${data.total_questions} Soru</span>
+                        </div>`;
+
+                    data.quiz.forEach((q, idx) => {
+                        html += `
+                            <div class="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800">
+                                <p class="text-xs sm:text-sm font-semibold text-white mb-2.5 flex items-start gap-2">
+                                    <span class="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-[11px] flex-shrink-0">${idx + 1}</span>
+                                    <span>${q.question}</span>
+                                </p>
+                                <div class="space-y-1.5 pl-7">`;
+                        
+                        q.options.forEach(opt => {
+                            html += `
+                                <button type="button" onclick="checkOption(this, '${opt.replace(/'/g, "\\'")}', '${q.correct_answer.replace(/'/g, "\\'")}')" class="w-full text-left p-2 rounded-lg bg-slate-800/80 hover:bg-slate-700/80 border border-slate-700/60 text-xs text-slate-300 transition flex items-center justify-between">
+                                    <span>${opt}</span>
+                                    <span class="status-icon text-xs"></span>
+                                </button>`;
+                        });
+
+                        html += `
+                                </div>
+                                <div class="explanation-box hidden mt-2.5 pt-2 border-t border-slate-800/80 text-[11px] text-slate-400 pl-7">
+                                    <span class="font-semibold text-emerald-400">Doğru Cevap: ${q.correct_answer}</span>
+                                    <p class="mt-0.5 text-slate-400">${q.explanation || ''}</p>
+                                </div>
+                            </div>`;
+                    });
+
+                    html += `</div>`;
+                    showContent("Çalışma Sınavı", "fa-solid fa-clipboard-question text-emerald-400", html);
+                } else {
+                    showContent("Sınav Hatası", "fa-solid fa-circle-exclamation text-red-400", `<p class="text-red-400">${data.detail || "Soru üretilemedi. Lütfen önce not yükleyin."}</p>`);
+                }
+            } catch (err) {
+                showContent("Hata", "fa-solid fa-circle-exclamation text-red-400", "Sınav servisine ulaşılamadı.");
+            }
+        }
+
+        // Test Seçenek Kontrolü
+        function checkOption(btn, selected, correct) {
+            const parent = btn.parentElement;
+            const explanation = parent.parentElement.querySelector('.explanation-box');
+            if (explanation) explanation.classList.remove('hidden');
+
+            const allButtons = parent.querySelectorAll('button');
+            allButtons.forEach(b => {
+                b.disabled = true;
+                b.classList.remove('hover:bg-slate-700/80');
+            });
+
+            if (selected.trim().toLowerCase() === correct.trim().toLowerCase()) {
+                btn.classList.add('bg-emerald-950/80', 'border-emerald-600', 'text-emerald-200');
+                btn.querySelector('.status-icon').innerHTML = '<i class="fa-solid fa-check text-emerald-400"></i>';
+            } else {
+                btn.classList.add('bg-red-950/80', 'border-red-600', 'text-red-200');
+                btn.querySelector('.status-icon').innerHTML = '<i class="fa-solid fa-xmark text-red-400"></i>';
+                
+                // Doğru olanı yeşil yap
+                allButtons.forEach(b => {
+                    if (b.innerText.trim().toLowerCase().includes(correct.trim().toLowerCase())) {
+                        b.classList.add('bg-emerald-950/60', 'border-emerald-700', 'text-emerald-300');
+                    }
+                });
+            }
+        }
+
+        // 4. Zihin Haritası / Kavram Akış Şeması (Mermaid.js Flowchart LR)
+        async function generateMindmap() {
+            showContent("Kavram Akış Şeması (Zihin Haritası)", "fa-solid fa-sitemap text-indigo-400", `
+                <div class="flex items-center gap-3 p-4 bg-slate-900/60 rounded-xl border border-slate-800 text-slate-300">
+                    <i class="fa-solid fa-spinner fa-spin text-indigo-400 text-lg"></i>
+                    <div>
+                        <p class="font-semibold text-white text-xs sm:text-sm">Kavram Akış Şeması (Flowchart LR) Çıkarılıyor...</p>
+                        <p class="text-[11px] text-slate-400">Ders notlarındaki ana ve alt kavramlar soldan sağa akış şemasına dönüştürülüyor.</p>
+                    </div>
+                </div>
+            `);
+
+            try {
+                const response = await fetch(API_BASE + '/ask-notes', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        question: "Bu ders notundaki ana ve alt kavramları Mermaid.js flowchart LR (soldan sağa kavram akış şeması) olarak görselleştir.",
+                        n_results: 8,
+                        max_tokens: 2048
+                    })
+                });
+
+                const data = await response.json();
+                if (response.ok && data.answer) {
+                    lastBotMessage = data.answer;
+
+                    const mermaidCode = extractMermaidCode(data.answer);
+
+                    const html = `
+                        <div class="space-y-3 w-full">
+                            <div class="flex items-center justify-between pb-2 border-b border-slate-800">
+                                <span class="text-xs font-semibold text-indigo-400 uppercase tracking-wider flex items-center gap-1.5">
+                                    <i class="fa-solid fa-diagram-project text-xs"></i> Kavram Akış Şeması (Mermaid.js Flowchart)
+                                </span>
+                                <span class="text-[10px] text-slate-400 font-mono bg-slate-800/80 px-2 py-0.5 rounded border border-slate-700">flowchart LR</span>
+                            </div>
+                            <div class="mermaid-container w-full overflow-x-auto rounded-xl border border-slate-700/80 bg-slate-900/80 p-4 shadow-inner">
+                                <div class="mermaid flex justify-center items-center min-w-full">
+${mermaidCode}
+                                </div>
+                            </div>
+                        </div>
+                    `;
+
+                    showContent("Kavram Akış Şeması", "fa-solid fa-sitemap text-indigo-400", html);
+
+                    // Ekrana basılmasının hemen ardından mermaid.run() fonksiyonunu tetikle
+                    await triggerMermaidRender();
+                    scrollChatToBottom();
+                } else {
+                    showContent("Hata", "fa-solid fa-circle-exclamation text-red-400", `<p class="text-red-400">${data.detail || "Kavram şeması üretilemedi. Lütfen önce ders notu yükleyin."}</p>`);
+                }
+            } catch (err) {
+                showContent("Hata", "fa-solid fa-circle-exclamation text-red-400", `Şema servisine ulaşılamadı: ${err.message}`);
+            }
+        }
+
+        const runMindMap = generateMindmap;
+
+        // 5. Kavram Sözlüğü
+        async function runGlossary() {
+            showContent("Kavram Sözlüğü", "fa-solid fa-book-bookmark text-cyan-400", "Ders notlarındaki anahtar kavramlar ve tanımlar ayıklanıyor...");
+            try {
+                const response = await fetch(API_BASE + '/ask-notes', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        question: 'Bu belgede geçen en önemli kavramları, terimleri ve tanımlarını bir kavram sözlüğü (glossary) halinde açıkla.',
+                        n_results: 5,
+                        max_tokens: 2048
+                    })
+                });
+                const data = await response.json();
+                if (response.ok) {
+                    showContent("Kavram Sözlüğü (Glossary)", "fa-solid fa-book-bookmark text-cyan-400", renderMarkdown(data.answer));
+                    lastBotMessage = data.answer;
+                } else {
+                    showContent("Hata", "fa-solid fa-circle-exclamation text-red-400", `<p class="text-red-400">${data.detail || "Sözlük üretilemedi."}</p>`);
+                }
+            } catch (err) {
+                showContent("Hata", "fa-solid fa-circle-exclamation text-red-400", "Sözlük servisine ulaşılamadı.");
+            }
+        }
+
+        // 6. Sınav Tahmini
+        async function runExamPrediction() {
+            showContent("Sınav Sorusu Tahminleri", "fa-solid fa-bullseye text-rose-400", "Sınavda çıkması en muhtemel sorular tahmin ediliyor...");
+            try {
+                const response = await fetch(API_BASE + '/ask-notes', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        question: 'Bu ders notlarından final/vize sınavında çıkması en muhtemel soruları, odaklanılan konuları ve önem derecelerini tahmin et.',
+                        n_results: 5,
+                        max_tokens: 2048
+                    })
+                });
+                const data = await response.json();
+                if (response.ok) {
+                    showContent("Olası Sınav Sorusu Tahminleri", "fa-solid fa-bullseye text-rose-400", renderMarkdown(data.answer));
+                    lastBotMessage = data.answer;
+                } else {
+                    showContent("Hata", "fa-solid fa-circle-exclamation text-red-400", `<p class="text-red-400">${data.detail || "Tahmin üretilemedi."}</p>`);
+                }
+            } catch (err) {
+                showContent("Hata", "fa-solid fa-circle-exclamation text-red-400", "Tahmin motoruna ulaşılamadı.");
+            }
+        }
+
+        // 7. PowerPoint Sunumu
+        async function runGeneratePresentation() {
+            showContent("PowerPoint (.pptx) Oluşturuluyor...", "fa-solid fa-file-powerpoint text-orange-400", "Ders notlarından profesyonel slayt şablonu hazırlanıyor...");
+            try {
+                const response = await fetch(API_BASE + '/generate-presentation', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        text: lastBotMessage,
+                        title: "Ders Notu Sunumu",
+                        subtitle: "Akıllı Not AI Tarafından Üretildi",
+                        max_slides: 6
+                    })
+                });
+                const data = await response.json();
+                if (response.ok && data.download_url) {
+                    const downloadUrl = data.download_url.startsWith('http') ? data.download_url : (API_BASE + data.download_url);
+                    const html = `
+                        <div class="p-4 rounded-xl bg-orange-950/40 border border-orange-800/60 text-slate-200 space-y-3">
+                            <div class="flex items-center gap-3">
+                                <div class="w-10 h-10 rounded-lg bg-orange-500/20 text-orange-400 flex items-center justify-center text-lg">
+                                    <i class="fa-solid fa-file-powerpoint"></i>
+                                </div>
+                                <div>
+                                    <p class="font-bold text-white text-sm">${data.filename || 'sunum.pptx'}</p>
+                                    <p class="text-[11px] text-slate-400">${data.slide_info || 'Kapak + İçerik Slaytları'}</p>
+                                </div>
+                            </div>
+                            <p class="text-xs text-slate-300">Sunum dosyası başarıyla derlendi. İndirmek için aşağıdaki butona tıklayın:</p>
+                            <a href="${downloadUrl}" download class="inline-flex items-center gap-2 px-4 py-2 bg-orange-600 hover:bg-orange-500 text-white rounded-lg text-xs font-semibold transition shadow-md shadow-orange-600/30">
+                                <i class="fa-solid fa-download"></i> PowerPoint (.pptx) Dosyasını İndir
+                            </a>
+                        </div>
+                    `;
+                    showContent("PowerPoint Sunumu Hazır", "fa-solid fa-file-powerpoint text-orange-400", html);
+                } else {
+                    showContent("Sunum Hatası", "fa-solid fa-circle-exclamation text-red-400", `<p class="text-red-400">${data.detail || "Sunum üretilemedi."}</p>`);
+                }
+            } catch (err) {
+                showContent("Hata", "fa-solid fa-circle-exclamation text-red-400", "Sunum servisine bağlanılamadı.");
+            }
+        }
+
+        // =========================================================
+        // STUDIO MESAJLARI VE ÇIKTILARI (Sohbet Akışı İçine Ekleme)
+        // =========================================================
+        function showContent(title, iconClass, htmlContent) {
+            const history = document.getElementById('chatHistory');
+            if (!history) return;
+
+            // Yükleme durumu kontrolü
+            const isLoading = htmlContent.includes('fa-spinner') || 
+                              htmlContent.includes('taranıyor') || 
+                              htmlContent.includes('hazırlanıyor') || 
+                              htmlContent.includes('ayıklanıyor') || 
+                              htmlContent.includes('tahmin ediliyor') ||
+                              title.includes('Hazırlanıyor') || 
+                              title.includes('Oluşturuluyor');
+
+            let cardContainer = document.getElementById('activeStudioMessage');
+
+            if (!cardContainer) {
+                // Sohbet geçmişinin sonuna yeni bir kart ekle
+                cardContainer = document.createElement('div');
+                cardContainer.className = 'flex gap-3 studio-msg-item transition-all duration-300';
+                history.appendChild(cardContainer);
+            }
+
+            if (isLoading) {
+                cardContainer.id = 'activeStudioMessage';
+            } else {
+                cardContainer.removeAttribute('id');
+            }
+
+            // Kart tasarımı
+            cardContainer.innerHTML = `
+                <div class="w-8 h-8 rounded-lg bg-gradient-to-tr from-indigo-600 to-violet-600 flex items-center justify-center flex-shrink-0 text-white shadow-md">
+                    <i class="${iconClass || 'fa-solid fa-wand-magic-sparkles'} text-xs"></i>
+                </div>
+                <div class="flex-1 max-w-[90%] bg-gradient-to-b from-[#131b2e] to-[#0e1626] border border-indigo-500/30 rounded-2xl rounded-tl-sm p-4 sm:p-5 shadow-xl relative overflow-hidden transition-all duration-300">
+                    <div class="flex items-center justify-between pb-3 mb-3 border-b border-slate-700/80">
+                        <div class="flex items-center gap-2.5">
+                            <div class="w-7 h-7 rounded-lg bg-indigo-500/20 text-indigo-400 flex items-center justify-center">
+                                <i class="${iconClass || 'fa-solid fa-bolt'} text-xs"></i>
+                            </div>
+                            <h3 class="text-xs sm:text-sm font-bold text-white tracking-wide">${escapeHtml(title)}</h3>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <button onclick="copyStudioCardText(this)" class="text-xs text-slate-400 hover:text-indigo-300 p-1.5 rounded hover:bg-slate-800/80 transition" title="Kopyala">
+                                <i class="fa-regular fa-copy"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="text-slate-200 text-xs sm:text-sm leading-relaxed overflow-x-auto select-text markdown-content">
+                        ${htmlContent}
+                    </div>
+                </div>
+            `;
+
+            // Sohbet penceresini her işlemden sonra otomatik en aşağıya kaydır
+            scrollChatToBottom();
+
+            // Eğer içerik bir mermaid şeması barındırıyorsa çizimi tetikle
+            if (cardContainer.querySelector('.mermaid')) {
+                triggerMermaidRender();
+            }
+        }
+
+        function copyStudioCardText(btn) {
+            const card = btn.closest('.studio-msg-item');
+            const contentDiv = card ? card.querySelector('.markdown-content') : null;
+            const text = contentDiv ? contentDiv.innerText : '';
+            if (text) {
+                navigator.clipboard.writeText(text).then(() => {
+                    const icon = btn.querySelector('i');
+                    if (icon) {
+                        icon.className = 'fa-solid fa-check text-emerald-400';
+                        setTimeout(() => { icon.className = 'fa-regular fa-copy'; }, 2000);
+                    }
+                }).catch(() => {
+                    alert("Kopyalama başarısız.");
+                });
+            }
+        }
+
+        function closeContentArea() {
+            const area = document.getElementById('contentArea');
+            if (area) area.classList.add('hidden');
+        }
+
+        function copyContentText() {
+            // Geriye dönük uyumluluk
+        }
+
+        // =========================================================
+        // HAFIZAYI TEMİZLE
+        // =========================================================
+        async function clearNotes() {
+            if (confirm("ChromaDB'ye yüklenen tüm ders notları ve vektör kayıtları silinecek. Emin misiniz?")) {
+                try {
+                    const response = await fetch(API_BASE + '/rag-notes', { method: 'DELETE' });
+                    const data = await response.json();
+                    
+                    alert("ChromaDB hafızası başarıyla temizlendi!");
+                    clearChatHistory();
+
+                    // Belge listesini sıfırla
+                    document.getElementById('uploadedDocList').innerHTML = `
+                        <li id="noDocsPlaceholder" class="text-xs text-slate-500 italic text-center py-6 bg-slate-900/40 rounded-xl border border-dashed border-slate-800/80 flex flex-col items-center gap-2">
+                            <i class="fa-solid fa-box-open text-slate-600 text-lg"></i>
+                            Henüz belge yüklenmedi
+                        </li>
+                    `;
+                    document.getElementById('uploadedDocCount').textContent = "0";
+                    document.getElementById('fileNameDisplay').textContent = "Dosya Seçin veya Sürükleyin";
+                    document.getElementById('uploadBtn').disabled = true;
+                    document.getElementById('uploadStatus').classList.add('hidden');
+                    closeContentArea();
+
+                    lastBotMessage = "Hafıza temizlendi. Lütfen yeni bir ders notu yükleyin.";
+                } catch (err) {
+                    alert("Hafıza temizlenirken bir hata oluştu: " + err.message);
+                }
+            }
+        }
+    </script>
+</body>
+</html>

@@ -3,12 +3,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
-from fastapi.middleware.cors import CORSMiddleware
+from starlette.concurrency import run_in_threadpool
 
 from src.ocr_engine import extract_text_from_image
 from src.rag_engine import (
@@ -44,26 +42,37 @@ AUDIO_DIR.mkdir(parents=True, exist_ok=True)
 PRESENTATION_DIR = STATIC_DIR / "presentations"
 PRESENTATION_DIR.mkdir(parents=True, exist_ok=True)
 
-app = FastAPI(title="Ders Notu Özetleyici")
+app = FastAPI(
+    title="Ders Notu Özetleyici & RAG Asistanı",
+    description="Akıllı Not tabanlı ders notu özetleme, RAG tabanlı soru yanıtlama ve akıllı öğrenme asistanı.",
+    version="2.1.0",
+)
 
-# CORS ayarları (Eğer projende varsa app = FastAPI()'nin hemen altında olmalı)
+# CORS yapılandırması: Localhost, Live Server (port 5500) ve dosya sisteminden gelen isteklere tam izin verir
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
-# 2. APP OLUŞTURULDUKTAN SONRA EKLENMESİ GEREKEN KISIM: Arayüzü bağla
-app.mount("/static", StaticFiles(directory="static"), name="static")
-
-@app.get("/")
-async def read_index():
-    return FileResponse("static/index.html")
-
-# Statik dosyaları (özellikle oluşturulan ses dosyalarını) dışa aç
+# Statik dosyaları dışa aç
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+
+@app.get("/", tags=["Genel"])
+async def root():
+    index_file = STATIC_DIR / "index.html"
+    if index_file.exists():
+        return FileResponse(str(index_file))
+    return {
+        "status": "online",
+        "app_name": "Ders Notu Özetleyici & Akıllı Not RAG API",
+        "version": "2.1.0",
+        "docs_url": "/docs",
+    }
 
 
 # ==========================================
@@ -72,7 +81,7 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 class TextSummarizeRequest(BaseModel):
     text: str = Field(..., description="Özetlenecek metin", min_length=1)
-    max_length: Optional[int] = Field(150, description="Maksimum token uzunluğu")
+    max_length: Optional[int] = Field(1024, description="Maksimum token uzunluğu")
     min_length: Optional[int] = Field(30, description="Minimum token uzunluğu")
     model_name: Optional[str] = Field(None, description="Özel Hugging Face model adı")
 
@@ -99,6 +108,7 @@ class IndexNotesRequest(BaseModel):
 class AskNotesRequest(BaseModel):
     question: str = Field(..., description="Ders notlarına sorulacak soru", min_length=2)
     n_results: Optional[int] = Field(3, description="Taranacak en alakalı parça sayısı", ge=1, le=10)
+    max_tokens: Optional[int] = Field(2048, description="Maksimum token veya karakter sınırı")
 
 
 class AskNotesResponse(BaseModel):
@@ -163,11 +173,11 @@ class AudioSummaryResponse(BaseModel):
 # Genel & Durum Endpoint'leri
 # ==========================================
 
-@app.get("/", tags=["Genel"])
-def root():
+@app.get("/api-status", tags=["Genel"])
+def api_status_endpoint():
     return {
         "status": "online",
-        "app_name": "Ders Notu Özetleyici & NotebookLM RAG API",
+        "app_name": "Ders Notu Özetleyici & Akıllı Not RAG API",
         "version": "2.1.0",
         "docs_url": "/docs",
     }
@@ -181,9 +191,14 @@ def rag_stats_endpoint():
 
 @app.delete("/rag-notes", tags=["RAG (Notlara Soru Sorma)"])
 def clear_notes_endpoint():
-    """ChromaDB'de saklanan tüm ders notlarını temizler."""
+    """ChromaDB'de saklanan tüm ders notlarını temizler ve yeni boş koleksiyon başlatır."""
     success = clear_rag_notes()
-    return {"status": "success" if success else "error", "message": "Ders notları temizlendi."}
+    # Hemen ardından yeni boş koleksiyonun hazır ve aktif olduğunu doğrula
+    try:
+        get_chroma_collection()
+    except Exception as err:
+        logger.warning("Koleksiyon hazır edilirken uyarı: %s", err)
+    return {"status": "success" if success else "error", "message": "Ders notları temizlendi ve yeni boş hafıza başlatıldı."}
 
 
 # ==========================================
@@ -225,6 +240,12 @@ async def index_pdf_endpoint(
 ):
     """Yüklenen PDF dosyasının sayfalarını ayıklar ve ChromaDB'ye kaydeder."""
     try:
+        if not file.filename or not file.filename.lower().endswith(".pdf"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Lütfen geçerli bir .pdf dosyası yükleyin.",
+            )
+
         content = await file.read()
         if not content:
             raise HTTPException(
@@ -232,7 +253,21 @@ async def index_pdf_endpoint(
                 detail="Yüklenen PDF dosyası boş.",
             )
 
-        chunks_added = add_pdf_to_rag(content, source_name=file.filename or "uploaded_pdf")
+        # Thread pool içinde çalıştırarak event loop kilitlenmesini engelle
+        chunks_added = await run_in_threadpool(
+            add_pdf_to_rag,
+            content,
+            file.filename or "pdf_belgesi",
+        )
+
+        if chunks_added == 0:
+            return {
+                "status": "warning",
+                "filename": file.filename,
+                "chunks_added": 0,
+                "message": f"'{file.filename}' belgesinden metin çıkarılamadı. Belge taranmış resim veya boş olabilir.",
+            }
+
         return {
             "status": "success",
             "filename": file.filename,
@@ -242,7 +277,7 @@ async def index_pdf_endpoint(
     except HTTPException:
         raise
     except Exception as exc:
-        logger.error("PDF indeksleme hatası: %s", exc)
+        logger.error("PDF indeksleme hatası: %s", exc, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"PDF işlenirken hata oluştu: {str(exc)}",
@@ -254,12 +289,16 @@ async def index_pdf_endpoint(
     response_model=AskNotesResponse,
     status_code=status.HTTP_200_OK,
     tags=["RAG (Notlara Soru Sorma)"],
-    summary="Ders Notlarına Soru Sor (NotebookLM RAG)",
+    summary="Ders Notlarına Soru Sor (Akıllı Not RAG)",
 )
 def ask_notes_endpoint(request: AskNotesRequest):
     """Ders notları içerisinden en alakalı kısımları bularak soruyu yanıtlar."""
     try:
-        result = ask_rag_notes(query=request.question, n_results=request.n_results or 3)
+        result = ask_rag_notes(
+            query=request.question,
+            n_results=request.n_results or 3,
+            max_tokens=request.max_tokens or 2048,
+        )
         return AskNotesResponse(
             status="success",
             query=result["query"],

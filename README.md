@@ -1,6 +1,6 @@
-# Ders Notu Özetleyici & NotebookLM RAG Asistanı
+# Ders Notu Özetleyici & Akıllı Not RAG Asistanı
 
-Bu proje, ders notları görsellerinden OCR ile metin çıkaran, Hugging Face ile Türkçe özetleyen ve ChromaDB tabanlı RAG mimarisiyle ders notlarına soru sorma (NotebookLM benzeri), otomatik quiz ve çalışma kartı (flashcard) üretme yeteneklerine sahip bir yapay zeka asistanıdır.
+Bu proje, ders notları görsellerinden OCR ile metin çıkaran, Hugging Face ile Türkçe özetleyen ve ChromaDB tabanlı RAG mimarisiyle ders notlarına soru sorma (Akıllı Not benzeri), otomatik quiz ve çalışma kartı (flashcard) üretme yeteneklerine sahip bir yapay zeka asistanıdır.
 
 ## Özellikler
 
@@ -45,7 +45,7 @@ Ders-Notu-Ozetleyici/
 | `POST` | `/extract-text` | Görselden yalnızca OCR ile metin çıkarma |
 | `POST` | `/index-notes` | Metin notlarını ChromaDB'ye kaydetme |
 | `POST` | `/index-pdf` | PDF ders notunu ChromaDB'ye kaydetme |
-| `POST` | `/ask-notes` | **Ders notlarına soru sorma (NotebookLM RAG)** |
+| `POST` | `/ask-notes` | **Ders notlarına soru sorma (Akıllı Not RAG)** |
 | `POST` | `/generate-quiz` | **Ders notundan Quiz ve Soru Kartı üretme** |
 | `POST` | `/audio-summary` | **Özet metnini MP3 ses dosyasına dönüştürme (Edge-TTS)** |
 | `GET` | `/audio-voices` | Kullanılabilir Türkçe ses modellerini listeleme |

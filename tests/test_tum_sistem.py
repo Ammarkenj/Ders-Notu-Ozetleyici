@@ -4,7 +4,7 @@ Bu test dosyası, projenin 6 temel çekirdek bileşenini sırasıyla ve bağıms
 olarak doğrular:
 1. Görsel Ön İşleme ve OCR Metin Çıkarma (OpenCV & EasyOCR)
 2. Türkçe NLP Metin Özetleme (Hugging Face / Kural Tabanlı)
-3. ChromaDB Vektör Veritabanı ve Soru Yanıtlama (NotebookLM RAG)
+3. ChromaDB Vektör Veritabanı ve Soru Yanıtlama (Akıllı Not RAG)
 4. Otomatik Quiz (Çoktan Seçmeli Test) ve Çalışma Kartı (Flashcard) Üretimi
 5. Edge-TTS ile MP3 Sesli Özet Oluşturma ve Statik Dosya Kontrolü
 6. FastAPI REST API Sunucusu ve Tüm Uç Noktaların HTTP 200 Doğrulaması
@@ -27,8 +27,15 @@ from fastapi.testclient import TestClient
 from main import app
 from src.ocr_engine import extract_text_from_image, preprocess_image
 from src.rag_engine import (
-    add_text_to_rag, ask_rag_notes, query_rag_notes,
-    add_docx_to_rag, add_excel_to_rag, predict_exam_questions,
+    add_docx_to_rag,
+    add_excel_to_rag,
+    add_pdf_to_rag,
+    add_text_to_rag,
+    ask_rag_notes,
+    clear_rag_notes,
+    get_rag_stats,
+    predict_exam_questions,
+    query_rag_notes,
 )
 from src.summarizer import (
     generate_quiz_and_flashcards, summarize_text,
@@ -36,6 +43,14 @@ from src.summarizer import (
 )
 from src.tts_engine import generate_audio_summary
 from src.presentation_engine import generate_presentation
+
+
+@pytest.fixture(scope="session", autouse=True)
+def cleanup_chromadb_session():
+    """Tüm testler bittiğinde test verilerini ChromaDB'den otomatik olarak temizler."""
+    yield
+    clear_rag_notes()
+    RenkliKonsol.bilgi("Test oturumu tamamlandı: ChromaDB test verileri temizlendi.")
 
 
 class RenkliKonsol:
@@ -144,6 +159,9 @@ def test_03_chromadb_vektor_veritabani_rag():
     """3. Aşama: ChromaDB vektör araması ve notlara soru sorma (RAG) testi."""
     RenkliKonsol.baslik("AŞAMA 3: ChromaDB Vektör Veritabanı ve RAG Soru Yanıtlama Testi")
 
+    # Önceki test kalıntılarını temizle
+    clear_rag_notes()
+
     ders_notu_parcasi = (
         "Newton'un Birinci Hareket Yasası: Bir cisim üzerine dengelenmemiş net bir dış kuvvet etki etmedikçe, "
         "cisim duruyorsa durmaya, hareket ediyorsa sabit hızla doğrusal hareketine devam eder. "
@@ -167,7 +185,7 @@ def test_03_chromadb_vektor_veritabani_rag():
     assert "eylemsizlik" in benzer_parcalar[0]["text"].lower(), "Getirilen parçada anahtar kavram yer almalıdır."
     RenkliKonsol.basarili("Vektör benzerlik araması en alakalı bağlamı başarıyla çekti.")
 
-    # 3. NotebookLM Tarzı RAG Yanıt Üretimi Testi
+    # 3. Akıllı Not Tarzı RAG Yanıt Üretimi Testi
     rag_sonucu = ask_rag_notes(query="Newton'un birinci yasası nedir?", n_results=2)
     assert isinstance(rag_sonucu, dict), "RAG yanıtı sözlük formatında dönmelidir."
     assert rag_sonucu["found_relevant"] is True, "İlgili bağlam tespit edilmiş olmalıdır."
@@ -556,6 +574,68 @@ def test_09_excel_csv_indeksleme():
     RenkliKonsol.detay("XLSX Parça Sayısı", str(xlsx_yanit.json()["chunks_added"]))
 
 
+def test_09b_pdf_belgesi_indeksleme():
+    """9b. Aşama: PDF ders notunu ChromaDB'ye indeksleme ve /index-pdf API testi."""
+    RenkliKonsol.baslik("AŞAMA 9b: PDF Ders Notu İndeksleme ve /index-pdf API Testi")
+
+    # 1. Bellek içi geçerli metin içeren PDF oluştur
+    import io as _io
+    sahte_pdf_metni = b"""%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R >> >> /MediaBox [0 0 612 792] /Contents 5 0 R >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+5 0 obj
+<< /Length 58 >>
+stream
+BT
+/F1 16 Tf
+50 700 Td
+(Fizik Ders Notu: Kinetik ve Potansiyel Enerji) Tj
+ET
+endstream
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000244 00000 n 
+0000000318 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+426
+%%EOF"""
+
+    # 2. Doğrudan fonksiyon testi: add_pdf_to_rag
+    eklenen_pdf = add_pdf_to_rag(sahte_pdf_metni, source_name="Fizik_Enerji_Notu.pdf")
+    assert eklenen_pdf > 0, "PDF belgesinden en az bir parça ChromaDB'ye eklenmelidir."
+    RenkliKonsol.basarili(f"PDF belgesi ChromaDB'ye başarıyla indekslendi: {eklenen_pdf} parça.")
+
+    # 3. FastAPI /index-pdf Endpoint testi
+    istemci = TestClient(app)
+    pdf_yanit = istemci.post(
+        "/index-pdf",
+        files={"file": ("enerji_notu.pdf", _io.BytesIO(sahte_pdf_metni), "application/pdf")},
+    )
+    assert pdf_yanit.status_code == 200, f"POST /index-pdf başarısız: {pdf_yanit.text}"
+    pdf_verisi = pdf_yanit.json()
+    assert pdf_verisi["status"] == "success"
+    assert pdf_verisi["chunks_added"] > 0
+    RenkliKonsol.basarili(f"POST /index-pdf HTTP 200 OK doğrulandı ({pdf_verisi['chunks_added']} parça).")
+    RenkliKonsol.detay("Eklenen Parça", str(pdf_verisi["chunks_added"]))
+
+
 def test_10_kavram_sozlugu_uretimi():
     """10. Aşama: Ders notundan Kavram Sözlüğü, Formül ve Anahtar Kelime üretim testi."""
     RenkliKonsol.baslik("AŞAMA 10: Kavram Sözlüğü (Glossary) ve Formül Çıkarma Testi")
@@ -697,3 +777,12 @@ def test_08b_gelismis_pptx_tablo_ve_iki_sutun():
     RenkliKonsol.basarili(f"Gelişmiş sunum oluşturuldu: {slayt_sayisi} slayt, {boyut_kb:.1f} KB")
     RenkliKonsol.detay("Dosya", yol.name)
     RenkliKonsol.detay("Slayt Sayısı", str(slayt_sayisi))
+
+
+def test_09_test_verilerini_temizle():
+    """9. Aşama: Testler bittikten sonra ChromaDB test verilerini tamamen temizler."""
+    RenkliKonsol.baslik("AŞAMA 9: Test Verilerinin Temizlenmesi (Teardown)")
+    clear_rag_notes()
+    stats = get_rag_stats()
+    assert stats["total_chunks"] == 0, "ChromaDB test verileri temizlenmiş olmalıdır."
+    RenkliKonsol.basarili("ChromaDB test verileri başarıyla temizlendi, veritabanı sıfırlandı.")
