@@ -3,11 +3,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
+from src.gemini_service import GeminiUnavailableError
 from src.ocr_engine import extract_text_from_image
 from src.rag_engine import (
     add_docx_to_rag,
@@ -58,6 +59,13 @@ app.add_middleware(
     expose_headers=["*"],
 )
 
+@app.exception_handler(GeminiUnavailableError)
+async def gemini_unavailable_handler(request, exc: GeminiUnavailableError):
+    """Tüm LLM işleri Gemini'dedir; API kullanılamazsa lokal fallback yerine 503 döner."""
+    logger.error("Gemini API kullanılamıyor: %s", exc)
+    return JSONResponse(status_code=503, content={"detail": str(exc)})
+
+
 # Statik dosyaları dışa aç
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
@@ -83,7 +91,7 @@ class TextSummarizeRequest(BaseModel):
     text: str = Field(..., description="Özetlenecek metin", min_length=1)
     max_length: Optional[int] = Field(1024, description="Maksimum token uzunluğu")
     min_length: Optional[int] = Field(30, description="Minimum token uzunluğu")
-    model_name: Optional[str] = Field(None, description="Özel Hugging Face model adı")
+    model_name: Optional[str] = Field(None, description="Yok sayılır; tüm özetleme gemini-2.5-flash ile yapılır")
 
 
 class SummarizeResponse(BaseModel):
@@ -307,6 +315,8 @@ def ask_notes_endpoint(request: AskNotesRequest):
             sources=result["sources"],
             total_sources_found=result.get("total_sources_found", len(result["sources"])),
         )
+    except GeminiUnavailableError:
+        raise
     except Exception as exc:
         logger.error("Soru yanıtlama hatası: %s", exc)
         raise HTTPException(
@@ -357,6 +367,8 @@ def generate_quiz_endpoint(request: GenerateQuizRequest):
             total_flashcards=data["total_flashcards"],
         )
     except HTTPException:
+        raise
+    except GeminiUnavailableError:
         raise
     except Exception as exc:
         logger.error("Quiz üretim hatası: %s", exc)
@@ -432,7 +444,7 @@ async def list_voices_endpoint():
     summary="Metin Özetleme",
 )
 def summarize_endpoint(request: TextSummarizeRequest):
-    """Doğrudan verilen metin içeriğini Hugging Face transformers modeli ile özetler."""
+    """Doğrudan verilen metin içeriğini Gemini (gemini-2.5-flash) ile özetler."""
     try:
         raw_text = request.text.strip()
         if not raw_text:
@@ -456,6 +468,8 @@ def summarize_endpoint(request: TextSummarizeRequest):
             summary_length=len(summary),
         )
     except HTTPException:
+        raise
+    except GeminiUnavailableError:
         raise
     except Exception as exc:
         logger.error("Özetleme hatası: %s", exc)
@@ -514,6 +528,8 @@ async def summarize_image_endpoint(
             summary_length=len(summary),
         )
     except HTTPException:
+        raise
+    except GeminiUnavailableError:
         raise
     except Exception as exc:
         logger.error("Görsel özetleme hatası: %s", exc)
@@ -625,6 +641,8 @@ def predict_exam_questions_endpoint(request: ExamPredictionRequest):
             top_n=request.top_n or 5,
         )
         return result
+    except GeminiUnavailableError:
+        raise
     except Exception as exc:
         logger.error("Sınav tahmini hatası: %s", exc)
         raise HTTPException(
@@ -747,6 +765,8 @@ def generate_glossary_endpoint(request: GlossaryRequest):
     try:
         sonuc = generate_glossary(request.text)
         return {"status": "success", **sonuc}
+    except GeminiUnavailableError:
+        raise
     except Exception as exc:
         logger.error("Sözlük üretim hatası: %s", exc)
         raise HTTPException(
@@ -774,6 +794,8 @@ def generate_mindmap_endpoint(request: MindmapRequest):
     try:
         sonuc = generate_mindmap(request.text, max_nodes=request.max_nodes or 30)
         return {"status": "success", **sonuc}
+    except GeminiUnavailableError:
+        raise
     except Exception as exc:
         logger.error("Zihin haritası hatası: %s", exc)
         raise HTTPException(

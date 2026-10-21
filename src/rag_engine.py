@@ -9,6 +9,9 @@ import chromadb
 from chromadb.config import Settings
 import pypdf
 
+from src.gemini_service import GeminiUnavailableError, generate_with_distillation  # noqa: F401
+from src.quiz_generator import _extract_json_block
+
 logger = logging.getLogger(__name__)
 
 # ChromaDB veritabanı dizini
@@ -17,6 +20,9 @@ CHROMA_DIR = BASE_DIR / "data" / "processed" / "chroma_db"
 CHROMA_DIR.mkdir(parents=True, exist_ok=True)
 
 COLLECTION_NAME = "lecture_notes"
+
+# Gemini'ye gönderilecek maksimum bağlam uzunluğu (karakter)
+MAX_CONTEXT_CHARS = 12000
 
 _CHROMA_CLIENT = None
 _COLLECTION = None
@@ -387,396 +393,165 @@ def query_rag_notes(query: str, n_results: int = 3) -> List[Dict[str, Any]]:
     return formatted_results
 
 
-DURAK_KELIMELER = {
-    "ve", "veya", "ile", "bir", "bu", "da", "de", "ki", "ne", "mi", "mu", "mü",
-    "için", "olan", "gibi", "ise", "ama", "fakat", "ancak", "çok", "en", "her",
-    "olarak", "aynı", "daha", "kadar", "var", "yok", "şu", "o", "biz", "siz",
-    "onlar", "tarafından", "şekilde", "üzerine", "göre", "nedeniyle", "bunu",
-    "buna", "bunun", "yani", "hem", "ya", "the", "of", "in", "is", "and", "to", "a",
-    "bölüm", "ünite", "sayfa", "kaynak", "ödev", "hafta", "ders"
-}
+def _clean_mermaid_flowchart(raw_code: Optional[str]) -> Optional[str]:
+    """Gemini çıktısını geçerli ve hatasız bir Mermaid.js flowchart LR şemasına dönüştürür."""
+    if not raw_code or not raw_code.strip():
+        return None
+    code = raw_code.strip()
+    # Markdown kod bloklarını ayıkla
+    if "```" in code:
+        code = re.sub(r"```(?:mermaid|flowchart|graph)?\s*", "", code, flags=re.IGNORECASE)
+        code = code.replace("```", "").strip()
 
-FIIL_EKLERI = ("dır", "dir", "dur", "dür", "tir", "tır", "tur", "tür", "sıdır", "sidir", "sudur", "südür")
-GECERSIZ_KELIMELER = {
-    "sağlar", "yapar", "eder", "olur", "gelir", "gerekir", "bulunur", "verir", "alır",
-    "sağlamak", "yapmak", "etmek", "çalışır", "sağlayan", "yapan", "eden", "olan",
-    "içeren", "tanımlanan", "katmandır", "modelidir", "yöntemidir", "bağlanmasıdır",
-    "protokolüdür", "sürecidir", "yapısıdır"
-}
+    # flowchart LR direktifini kontrol et ve garantile
+    first_line_match = re.search(r"^\s*(flowchart|graph)\s+([A-Za-z]+)", code, re.IGNORECASE)
+    if first_line_match:
+        code = re.sub(r"^\s*(flowchart|graph)\s+([A-Za-z]+)", "flowchart LR", code, count=1, flags=re.IGNORECASE)
+    elif not code.strip().lower().startswith("flowchart lr"):
+        code = "flowchart LR\n" + code
 
+    # En azından birkaç bağlantı ok işareti (-->) içermelidir
+    if code.count("-->") < 1:
+        return None
 
-def _clean_flowchart_label(text: str, max_words: int = 4) -> str:
-    """Mermaid flowchart düğüm metnini temizler; parantez, köşeli ayraç ve çift tırnakları ayıklar."""
-    cleaned = re.sub(r'["`#*•\-–,/\\;()\[\]{}]', " ", text)
-    cleaned = re.sub(r"\s+", " ", cleaned).strip()
-    words = cleaned.split()
-    if len(words) > max_words:
-        cleaned = " ".join(words[:max_words])
-    return cleaned.strip() or "Kavram"
+    # Parantez/köşeli ayraç temizliği: düğüm metinleri içindeki parantez/tırnak hatalarını temizle
+    def _sanitize_bracket_label(match):
+        pre = match.group(1)
+        inner = match.group(2)
+        post = match.group(3)
+        cleaned_inner = re.sub(r'["`()\[\]{}]', ' ', inner)
+        cleaned_inner = re.sub(r'\s+', ' ', cleaned_inner).strip()
+        return f'{pre}{cleaned_inner}{post}'
 
+    code = re.sub(r'(\w+\(\[")([^"]*)("\]\))', _sanitize_bracket_label, code)
+    code = re.sub(r'(\w+\[")([^"]*)("\])', _sanitize_bracket_label, code)
 
-def _is_valid_topic(term: str) -> bool:
-    """Terimin anlamlı bir ana konu başlığı olup olmadığını doğrular."""
-    if not term or len(term) < 3:
-        return False
-    t_lower = term.lower().strip()
-    words = t_lower.split()
-    if not words:
-        return False
+    # classDef stillerini kontrol et; eksikse modern stilleri ekle
+    if "classDef" not in code:
+        code += "\n\n    %% Stil Tanımları\n"
+        code += "    classDef rootStyle fill:#4338ca,stroke:#6366f1,stroke-width:3px,color:#ffffff,font-weight:bold,font-size:13px;\n"
+        code += "    classDef mainStyle fill:#1e1b4b,stroke:#818cf8,stroke-width:2px,color:#e0e7ff,font-weight:600,font-size:12px;\n"
+        code += "    classDef subStyle fill:#0f172a,stroke:#10b981,stroke-width:1.5px,color:#f1f5f9,font-size:11px;\n"
+        code += "    class ROOT rootStyle;\n"
 
-    # Başta veya sonda olmaması gereken kelimeler
-    bad_starters = {"bu", "şu", "o", "bunlar", "şunlar", "tablo", "şekil", "örnek", "resim", "sayfa", "bölüm", "ünite", "kaynak", "ödev", "hafta", "not", "ders"}
-    if words[0] in bad_starters:
-        return False
-
-    bad_words = {"verirken", "sıralandığı", "olarak", "gibi", "ile", "için", "olan", "veya", "yaparken", "ederek", "olduğu", "görüldüğü", "bulunan", "içeren"}
-    if any(w in bad_words for w in words):
-        return False
-
-    if t_lower in DURAK_KELIMELER or t_lower in GECERSIZ_KELIMELER:
-        return False
-
-    bad_suffixes = ("diği", "dığı", "duğu", "düğü", "ken", "erek", "arak", "mesi", "ması", "mek", "mak", "miş", "mış", "muş", "müş", "ecek", "acak", "iyor", "ıyor", "uyor", "üyor", "malı", "meli", "dır", "dir", "dur", "dür", "tir", "tır", "tur", "tür", "sıdır", "sidir")
-    if any(t_lower.endswith(s) for s in bad_suffixes) and len(t_lower) <= 12:
-        return False
-
-    return True
+    return code.strip()
 
 
-def _extract_document_concepts(combined_text: str):
-    """Belgeden tanımlanmış kavramları ve açıklamalarını ayıklar."""
-    concepts = []
-    seen = set()
-
-    # 1. "Kavram: Tanım" veya "Kavram - Tanım" kalıpları (Parantez içi yabancı dil eklerini temizler)
-    defs = re.findall(r"^([A-ZÇĞİÖŞÜ0-9][\w\sçğıöşü\'\(\)\-]{2,50})\s*[:\-–]\s*(.+)$", combined_text, re.MULTILINE)
-    for term, definition in defs:
-        t_clean = re.sub(r"\(.*?\)", "", term).strip()
-        t_clean = re.sub(r"^[0-9]+[\.\-]\s*", "", t_clean).strip()
-        d_clean = definition.strip().rstrip(".- ") + "."
-        if _is_valid_topic(t_clean) and t_clean.lower() not in seen and len(d_clean) > 15:
-            seen.add(t_clean.lower())
-            concepts.append((t_clean, d_clean))
-
-    # 2. "X ... olarak tanımlanır / denir / adlandırılır" cümleleri
-    cumleler = re.split(r"(?<=[.!?])\s+", combined_text)
-    for c in cumleler:
-        c = c.strip()
-        if len(c) < 25 or len(c) > 300:
-            continue
-        m = re.match(
-            r"^([A-ZÇĞİÖŞÜ0-9][\w\sçğıöşü\'\(\)\-]{2,40})\s*[,;]?\s*(.*(?:olarak tanımlanır|olarak adlandırılır|denir|ifade edilir|anlamına gelir|sürecidir|yapısıdır|modelidir).*)",
-            c,
-            re.IGNORECASE,
-        )
-        if m:
-            raw_t = m.group(1).strip()
-            t_clean = re.sub(r"\(.*?\)", "", raw_t).strip()
-            t_clean = re.sub(r"^[0-9]+[\.\-]\s*", "", t_clean).strip()
-            d_clean = c.rstrip(".- ") + "."
-            if _is_valid_topic(t_clean) and t_clean.lower() not in seen:
-                seen.add(t_clean.lower())
-                concepts.append((t_clean, d_clean))
-
-    return concepts
-
-
-def _generate_mindmap_rag_answer(retrieved_items: List[Dict[str, Any]], collection) -> str:
-    """Kavram Akış Şeması (Mermaid flowchart LR):
-    Merkezde belgenin adı, etrafında renkli kutularla ana ve alt konuları bağlar.
-    """
-    texts = [item["text"] for item in retrieved_items if item.get("text")]
-    try:
-        extra_data = collection.get(limit=25)
-        docs = extra_data.get("documents", []) or []
-        for d in docs:
-            if d and d not in texts:
-                texts.append(d)
-    except Exception:
-        pass
-
-    combined_text = "\n".join(texts)
-
-    # 1. Merkez Düğüm: Yüklenen belgenin kaynak adını bul
-    center_name = "Ders Notları"
+def _build_context(retrieved_items: List[Dict[str, Any]], limit: int = MAX_CONTEXT_CHARS) -> str:
+    """ChromaDB'den bulunan ham bağlam parçalarını Gemini'ye iletilecek tek metne birleştirir (kurye modu)."""
+    parts: List[str] = []
+    total = 0
     for item in retrieved_items:
-        src = item.get("metadata", {}).get("source", "")
-        if src and not src.lower().startswith("kaynak"):
-            clean_src = re.sub(r"\.[a-zA-Z0-9]+$", "", src)
-            clean_src = re.sub(r"^[0-9]+[\.\-_]\s*", "", clean_src)
-            clean_src = clean_src.replace("_", " ").replace("-", " ").strip()
-            if clean_src and len(clean_src) > 2 and clean_src.lower() not in ["ders notu", "pdf belgesi"]:
-                center_name = clean_src
-                break
-
-    center_title = _clean_flowchart_label(center_name, max_words=4)
-    center_node_label = f"📘 {center_title}"
-
-    # 2. Tanımlı kavramları ve ana başlıkları ayıkla
-    extracted_concepts = _extract_document_concepts(combined_text)
-
-    ana_dallar = []
-    seen_dallar = set()
-    # Merkez başlığı dallara tekrar eklememek için işaretle
-    seen_dallar.add(center_title.lower())
-    for word in center_title.lower().split():
-        if len(word) > 4:
-            seen_dallar.add(word)
-
-    # Öncelik 1: Belgedeki gerçek kavram ve terim başlıkları
-    for term, definition in extracted_concepts:
-        clean_t = _clean_flowchart_label(term, max_words=3)
-        if (
-            _is_valid_topic(clean_t)
-            and clean_t.lower() not in seen_dallar
-            and clean_t.lower() != center_title.lower()
-            and len(ana_dallar) < 5
-        ):
-            seen_dallar.add(clean_t.lower())
-            ana_dallar.append((clean_t, definition))
-
-    # Öncelik 2: Büyük harfli teknik terim öbekleri (örn: İkili Sayı Sistemi, 2'ye Tümleme)
-    if len(ana_dallar) < 4:
-        phrases = re.findall(r"\b([A-ZÇĞİÖŞÜ0-9][\wçğıöşü\']+(?:\s+[A-ZÇĞİÖŞÜ0-9][\wçğıöşü\']+){1,2})\b", combined_text)
-        for ph in phrases:
-            clean_ph = _clean_flowchart_label(ph, max_words=3)
-            if _is_valid_topic(clean_ph) and clean_ph.lower() not in seen_dallar and len(ana_dallar) < 5:
-                seen_dallar.add(clean_ph.lower())
-                ana_dallar.append((clean_ph, ""))
-
-    # Öncelik 3: Frekansı yüksek anlamlı anahtar kelimeler
-    if len(ana_dallar) < 4:
-        kelimeler = re.findall(r"[A-ZÇĞİÖŞÜa-zçğıöşü]{4,}", combined_text)
-        sayac = Counter(k.lower() for k in kelimeler if _is_valid_topic(k))
-        for kw, _ in sayac.most_common(15):
-            clean_kw = _clean_flowchart_label(kw.capitalize(), max_words=2)
-            if _is_valid_topic(clean_kw) and clean_kw.lower() not in seen_dallar and len(ana_dallar) < 5:
-                seen_dallar.add(clean_kw.lower())
-                ana_dallar.append((clean_kw, ""))
-
-    # Yedek güvenli başlıklar
-    yedekler = ["Temel Kavramlar", "Mimari ve Yapı", "Temel İlkeler", "Uygulama Alanları", "Analiz ve Yöntemler"]
-    for yd in yedekler:
-        if len(ana_dallar) < 4 and yd.lower() not in seen_dallar:
-            seen_dallar.add(yd.lower())
-            ana_dallar.append((yd, ""))
-
-    # 3. Mermaid flowchart LR diyagramı inşa et
-    flowchart_lines = [
-        "flowchart LR",
-        f'    ROOT(["{center_node_label}"])\n'
-    ]
-
-    main_node_ids = []
-    sub_node_ids = []
-    cumleler = re.split(r"(?<=[.!?])\s+", combined_text)
-
-    for i, (dal_label, context_desc) in enumerate(ana_dallar[:5], 1):
-        m_id = f"M{i}"
-        main_node_ids.append(m_id)
-        flowchart_lines.append(f'    {m_id}(["{dal_label}"])')
-        flowchart_lines.append(f"    ROOT --> {m_id}")
-
-        alt_kavramlar = []
-        seen_alt = set()
-
-        if context_desc:
-            desc_words = [
-                w for w in re.findall(r"[A-ZÇĞİÖŞÜa-zçğıöşü0-9][\wçğıöşü\']{2,}", context_desc)
-                if _is_valid_topic(w) and w.lower() not in dal_label.lower() and w.lower() not in center_name.lower()
-            ]
-            for dw in desc_words:
-                clean_dw = _clean_flowchart_label(dw.capitalize(), max_words=2)
-                if clean_dw.lower() not in seen_alt and clean_dw.lower() not in dal_label.lower() and clean_dw.lower() not in center_name.lower():
-                    seen_alt.add(clean_dw.lower())
-                    alt_kavramlar.append(clean_dw)
-                    if len(alt_kavramlar) >= 3:
-                        break
-
-        if len(alt_kavramlar) < 2:
-            key_words = set(re.findall(r"\w+", dal_label.lower()))
-            for c in cumleler:
-                if any(kw in c.lower() for kw in key_words):
-                    c_terms = [
-                        w for w in re.findall(r"[A-ZÇĞİÖŞÜa-zçğıöşü0-9][\wçğıöşü\']{3,}", c)
-                        if _is_valid_topic(w) and w.lower() not in dal_label.lower() and w.lower() not in center_name.lower()
-                    ]
-                    for ct in c_terms:
-                        clean_ct = _clean_flowchart_label(ct.capitalize(), max_words=2)
-                        if clean_ct.lower() not in seen_alt and clean_ct.lower() not in dal_label.lower() and clean_ct.lower() not in center_name.lower():
-                            seen_alt.add(clean_ct.lower())
-                            alt_kavramlar.append(clean_ct)
-                            if len(alt_kavramlar) >= 3:
-                                break
-                if len(alt_kavramlar) >= 3:
-                    break
-
-        if len(alt_kavramlar) < 2:
-            default_subs = ["Temel Özellikler", "Çalışma Prensibi", "Uygulama Alanı"]
-            for ds in default_subs:
-                if len(alt_kavramlar) < 3 and ds.lower() not in seen_alt:
-                    alt_kavramlar.append(ds)
-
-        for j, ak in enumerate(alt_kavramlar[:3], 1):
-            s_id = f"S{i}_{j}"
-            sub_node_ids.append(s_id)
-            flowchart_lines.append(f'    {s_id}["{ak}"]')
-            flowchart_lines.append(f"    {m_id} --> {s_id}")
-
-        flowchart_lines.append("")
-
-    # 4. Stil Tanımları (Modern classDef)
-    flowchart_lines.append("    %% Stil Tanımları")
-    flowchart_lines.append("    classDef rootStyle fill:#4338ca,stroke:#6366f1,stroke-width:3px,color:#ffffff,font-weight:bold,font-size:13px;")
-    flowchart_lines.append("    classDef mainStyle fill:#1e1b4b,stroke:#818cf8,stroke-width:2px,color:#e0e7ff,font-weight:600,font-size:12px;")
-    flowchart_lines.append("    classDef subStyle fill:#0f172a,stroke:#10b981,stroke-width:1.5px,color:#f1f5f9,font-size:11px;")
-    flowchart_lines.append("    class ROOT rootStyle;")
-    if main_node_ids:
-        flowchart_lines.append(f"    class {','.join(main_node_ids)} mainStyle;")
-    if sub_node_ids:
-        flowchart_lines.append(f"    class {','.join(sub_node_ids)} subStyle;")
-
-    return "\n".join(flowchart_lines)
-
-
-def _generate_glossary_rag_answer(retrieved_items: List[Dict[str, Any]]) -> str:
-    """Kavram Sözlüğü Modu: Metinlerdeki önemli teknik terimleri ve tanımları ayıklayıp Markdown formatında döndürür."""
-    combined_text = "\n".join(item["text"] for item in retrieved_items if item.get("text"))
-    extracted_concepts = _extract_document_concepts(combined_text)
-
-    sozluk_maddeleri = []
-    seen = set()
-
-    for term, definition in extracted_concepts:
-        if term.lower() not in seen and len(sozluk_maddeleri) < 10:
-            seen.add(term.lower())
-            sozluk_maddeleri.append(f"- **{term}:** {definition}")
-
-    # Yeterli terim çıkmadıysa anahtar kelimeleri açıklayıcı cümlelerle eşleştir
-    if len(sozluk_maddeleri) < 5:
-        cumleler = re.split(r"(?<=[.!?])\s+", combined_text)
-        kelimeler = re.findall(r"[A-ZÇĞİÖŞÜa-zçğıöşü]{4,}", combined_text)
-        kelime_sayac = Counter(k.lower() for k in kelimeler if _is_valid_topic(k))
-        for kw, _ in kelime_sayac.most_common(15):
-            if kw in seen:
-                continue
-            for c in cumleler:
-                c_clean = c.strip()
-                if kw in c_clean.lower() and len(c_clean) > 30:
-                    seen.add(kw)
-                    sozluk_maddeleri.append(f"- **{kw.capitalize()}:** {c_clean.rstrip('.- ') + '.'}")
-                    break
-            if len(sozluk_maddeleri) >= 8:
-                break
-
-    if not sozluk_maddeleri:
-        sozluk_maddeleri = [
-            "- **Temel Kavram:** Ders notlarında incelenen ana prensipler ve teorik çerçeve.",
-            "- **Uygulama Alanı:** Konunun pratikteki işleyişi ve sağladığı çözümler."
-        ]
-
-    return "### 📖 Ders Notları Kavram Sözlüğü (Glossary)\n\n" + "\n".join(sozluk_maddeleri)
-
-
-def _generate_exam_predictions_rag_answer(retrieved_items: List[Dict[str, Any]], collection) -> str:
-    """Sınav Tahmini Modu: Notlardaki konulardan çıkması muhtemel 5 adet klasik/kavramsal soru ve cevap anahtarı üretir."""
-    combined_text = "\n".join(item["text"] for item in retrieved_items if item.get("text"))
-    extracted_concepts = _extract_document_concepts(combined_text)
-
-    onemli_konular = [term for term, _ in extracted_concepts]
-
-    # Yeterli değilse predict_exam_questions veya kelime sıklığından al
-    if len(onemli_konular) < 5:
-        try:
-            exam_report = predict_exam_questions(top_n=5)
-            for k in exam_report.get("en_onemli_konular", []):
-                w = k["konu_anahtar_kelimesi"]
-                if _is_valid_topic(w) and w.lower() not in [t.lower() for t in onemli_konular]:
-                    onemli_konular.append(w.capitalize())
-        except Exception:
-            pass
-
-    if len(onemli_konular) < 5:
-        kelimeler = re.findall(r"[A-ZÇĞİÖŞÜa-zçğıöşü]{4,}", combined_text)
-        kelime_sayac = Counter(k.lower() for k in kelimeler if _is_valid_topic(k))
-        for kw, _ in kelime_sayac.most_common(10):
-            if kw.lower() not in [t.lower() for t in onemli_konular] and len(onemli_konular) < 5:
-                onemli_konular.append(kw.capitalize())
-
-    default_konular = ["Temel Kavramlar", "Yöntemler", "İlkeler", "Sistem Yapısı", "Analiz"]
-    for dk in default_konular:
-        if len(onemli_konular) < 5 and dk.lower() not in [k.lower() for k in onemli_konular]:
-            onemli_konular.append(dk)
-
-    cumleler = re.split(r"(?<=[.!?])\s+", combined_text)
-
-    soru_kaliplari = [
-        "'{konu}' kavramını açıklayınız ve ders notlarındaki temel ilkeleriyle birlikte değerlendiriniz.",
-        "'{konu}' konusunun temel özellikleri ve çalışma mantığı nedir? Maddeler halinde açıklayınız.",
-        "'{konu}' bağlamında karşılaşılan başlıca problemler ve çözüm yaklaşımları nelerdir?",
-        "'{konu}' ile ilgili yöntemlerin sağladığı temel avantajlar ve uygulama alanları nelerdir?",
-        "'{konu}' konusunda dikkat edilmesi gereken teorik kurallar ve kritik noktalar nelerdir?",
-    ]
-
-    soru_bloklari = []
-    for i, konu in enumerate(onemli_konular[:5]):
-        konu_baslik = konu.capitalize()
-        soru_metni = soru_kaliplari[i % len(soru_kaliplari)].format(konu=konu_baslik)
-
-        # Doğrudan tanımlı kavramı kontrol et
-        cevap_cumlesi = ""
-        for term, definition in extracted_concepts:
-            if term.lower() == konu.lower():
-                cevap_cumlesi = definition
-                break
-
-        if not cevap_cumlesi:
-            for c in cumleler:
-                c_clean = c.strip()
-                if konu.lower() in c_clean.lower() and len(c_clean) > 25:
-                    cevap_cumlesi = c_clean.rstrip(".- ") + "."
-                    break
-
-        if not cevap_cumlesi:
-            cevap_cumlesi = f"{konu_baslik} konusu ders notlarında sıklıkla vurgulanmış olup sınavda ana hatları ve mekanizması sorulabilir."
-
-        soru_bloklari.append(f"### Soru {i + 1}: {soru_metni}\n**Cevap/Önemli Nokta:** {cevap_cumlesi}")
-
-    return "### 🎯 Olası Sınav Sorusu Tahminleri (Vize / Final)\n\n" + "\n\n".join(soru_bloklari)
-
-
-def _generate_summary_rag_answer(retrieved_items: List[Dict[str, Any]], query: str, is_summary: bool) -> str:
-    """Genel Özet ve Normal Sorular: Kaynakça metni yapıştırmadan temiz Markdown maddeleri döndürür."""
-    combined_text = "\n".join(item["text"] for item in retrieved_items if item.get("text"))
-    
-    query_words = set(re.findall(r"\w+", query.lower()))
-    cumleler = re.split(r"(?<=[.!?])\s+", combined_text)
-    
-    ranked_sentences = []
-    seen = set()
-
-    for sent in cumleler:
-        s = sent.strip()
-        s_clean = s.lstrip("-*• 0123456789.)")
-        if len(s_clean) < 25 or s_clean.lower() in seen:
+        text = (item.get("text") or "").strip()
+        if not text:
             continue
-        seen.add(s_clean.lower())
+        if total + len(text) > limit:
+            break
+        parts.append(text)
+        total += len(text)
+    return "\n\n".join(parts)
 
-        s_words = set(re.findall(r"\w+", s.lower()))
-        overlap = len(query_words.intersection(s_words))
-        ranked_sentences.append((overlap, s_clean))
 
-    ranked_sentences.sort(key=lambda x: x[0], reverse=True)
-    secilen_maddeler = [item[1] for item in ranked_sentences[:7]]
+def _post_mindmap(raw: str) -> Optional[str]:
+    return _clean_mermaid_flowchart(raw)
 
-    if not secilen_maddeler:
-        secilen_maddeler = [s.strip() for s in cumleler if len(s.strip()) > 30][:5]
 
-    if is_summary:
-        header = "### 📌 Ders Notları Genel Özeti\n\n"
-        return header + "\n".join(f"- {m}" for m in secilen_maddeler)
-    else:
-        return "\n".join(f"- {m}" for m in secilen_maddeler)
+def _post_glossary(raw: str) -> Optional[str]:
+    if raw and "- **" in raw:
+        if not raw.startswith("### 📖"):
+            raw = "### 📖 Ders Notları Kavram Sözlüğü (Glossary)\n\n" + raw.strip()
+        return raw.strip()
+    return None
+
+
+def _post_exam(raw: str) -> Optional[str]:
+    if raw and ("### Soru" in raw or "### 🎯" in raw):
+        if not raw.startswith("### 🎯"):
+            raw = "### 🎯 Olası Sınav Sorusu Tahminleri (Vize / Final)\n\n" + raw.strip()
+        return raw.strip()
+    return None
+
+
+def _post_summary(raw: str) -> Optional[str]:
+    if raw and len(raw.strip()) > 20:
+        if not raw.startswith("### 📌"):
+            raw = "### 📌 Ders Notları Genel Özeti\n\n" + raw.strip()
+        return raw.strip()
+    return None
+
+
+def _post_qa(raw: str) -> Optional[str]:
+    return raw.strip() if raw and len(raw.strip()) > 20 else None
+
+
+def _build_prompt(task_type: str, query: str, context: str) -> str:
+    """Görev türüne göre Gemini prompt'unu oluşturur."""
+    ctx_block = f"DERS NOTU BAĞLAMI:\n\"\"\"\n{context}\n\"\"\""
+
+    if task_type == "mindmap":
+        return (
+            "Aşağıdaki ders notundaki ana ve alt kavramları Mermaid.js flowchart LR (soldan sağa kavram akış şeması) olarak görselleştir.\n\n"
+            "KESİN VE TAVİZSİZ KURALLAR:\n"
+            "1. Yanıtın SADECE ve SADECE geçerli Mermaid.js kodu olmalıdır. Asla markdown bloğu (```), açıklama veya yorum yazma.\n"
+            "2. Doğrudan 'flowchart LR' ile başla.\n"
+            "3. Merkez düğüm ders notunun ana konusu olmalı: ROOT([\"📘 Ana Konu\"])\n"
+            "4. En az 3-4 adet ana kavram düğümü ekle: ROOT --> M1([\"Ana Kavram 1\"])\n"
+            "5. Her ana kavrama en az 2 adet alt kavram bağla: M1 --> S1_1[\"Alt Kavram 1\"]\n"
+            "6. Düğüm metinleri içinde ASLA parantez (), köşeli ayraç [], süslü ayraç {}, çift tırnak \" veya tek tırnak ' KULLANMA.\n"
+            "7. Şemanın sonuna mutlaka modern classDef stillerini ekle:\n"
+            "    classDef rootStyle fill:#4338ca,stroke:#6366f1,stroke-width:3px,color:#ffffff,font-weight:bold,font-size:13px;\n"
+            "    classDef mainStyle fill:#1e1b4b,stroke:#818cf8,stroke-width:2px,color:#e0e7ff,font-weight:600,font-size:12px;\n"
+            "    classDef subStyle fill:#0f172a,stroke:#10b981,stroke-width:1.5px,color:#f1f5f9,font-size:11px;\n"
+            "    class ROOT rootStyle;\n\n"
+            f"{ctx_block}"
+        )
+    if task_type == "glossary":
+        return (
+            "Aşağıdaki ders notu metninde geçen tüm önemli teknik terimleri, kavramları ve tanımlarını akademik bir titizlikle çıkar.\n"
+            "Format tam olarak şöyle olmalıdır:\n"
+            "### 📖 Ders Notları Kavram Sözlüğü (Glossary)\n\n"
+            "- **Terim 1:** Detaylı akademik açıklama ve tanım.\n"
+            "- **Terim 2:** Detaylı akademik açıklama ve tanım.\n\n"
+            f"{ctx_block}"
+        )
+    if task_type == "exam":
+        return (
+            "Aşağıdaki ders notu bağlamından üniversite sınavlarında (Vize / Final) çıkması en muhtemel 5 adet klasik veya analitik sınav sorusu "
+            "ve bunların detaylı cevap anahtarını/önemli noktalarını hazırla.\n\n"
+            "Format tam olarak şöyle olmalıdır:\n"
+            "### 🎯 Olası Sınav Sorusu Tahminleri (Vize / Final)\n\n"
+            "### Soru 1: Soru metni?\n"
+            "**Cevap/Önemli Nokta:** Detaylı cevap açıklaması ve kritik noktalar.\n\n"
+            "### Soru 2: Soru metni?\n"
+            "**Cevap/Önemli Nokta:** Detaylı cevap açıklaması ve kritik noktalar.\n\n"
+            f"{ctx_block}"
+        )
+    if task_type == "summary":
+        return (
+            "Aşağıdaki ders notu bağlamını en yüksek akademik standartta özetle. "
+            "Önemli kavramları, ilişkileri ve sonuçları maddeler halinde Markdown ile sun.\n\n"
+            "Format:\n"
+            "### 📌 Ders Notları Genel Özeti\n\n"
+            "- **Kavram/Nokta:** Açıklama.\n\n"
+            f"{ctx_block}"
+        )
+    return (
+        "Aşağıdaki ders notu bağlamını kullanarak kullanıcının sorusuna akademik, doğrudan, net ve kapsamlı bir yanıt ver. "
+        "Yalnızca bağlamdaki bilgilere dayan; bağlamda yoksa bunu belirt.\n"
+        "Maddeli açıklamalar veya net paragraflar kullan.\n\n"
+        f"KULLANICI SORUSU: {query}\n\n"
+        f"{ctx_block}"
+    )
+
+
+_TASK_CONFIG = {
+    # task_type: (postprocess, temperature, max_output_tokens)
+    "mindmap": (_post_mindmap, 0.1, 3000),
+    "glossary": (_post_glossary, 0.2, 3000),
+    "exam": (_post_exam, 0.2, 3500),
+    "summary": (_post_summary, 0.2, 3000),
+    "qa": (_post_qa, 0.2, 2500),
+}
 
 
 def ask_rag_notes(
@@ -784,7 +559,12 @@ def ask_rag_notes(
     n_results: int = 3,
     max_tokens: int = 2048,
 ) -> Dict[str, Any]:
-    """Akıllı Not RAG: Kullanıcı sorusuna veya Studio aracına göre dinamik ve akıllı yanıt üretir."""
+    """Akıllı Not RAG (Kurye Modu).
+
+    Lokal CPU + ChromaDB yalnızca bağlam bulur; metin üretiminin tamamı Gemini'dedir
+    (gemini-2.5-flash). Gemini yanıt veremezse GeminiUnavailableError fırlatılır.
+    Başarılı her yanıt ai_cache.json'a ve data/fine_tuning_dataset.jsonl'e yazılır.
+    """
     collection = get_chroma_collection()
     total_docs = collection.count()
 
@@ -794,32 +574,35 @@ def ask_rag_notes(
             "answer": "Sistemde henüz kayıtlı ders notu bulunmuyor veya bu soruyla ilgili içerik tespit edilemedi. Lütfen önce ders notu veya PDF yükleyin.",
             "sources": [],
             "found_relevant": False,
+            "total_sources_found": 0,
         }
 
     q_lower = query.lower()
-    is_mindmap = (
-        "mindmap" in q_lower
-        or "zihin haritası" in q_lower
-        or "zihin haritasi" in q_lower
-        or "hiyerarşik" in q_lower
-        or "akış şeması" in q_lower
-        or "akis semasi" in q_lower
-        or "flowchart" in q_lower
-        or "graph" in q_lower
-        or "kavram şeması" in q_lower
-        or "kavram semasi" in q_lower
-        or "kavram haritası" in q_lower
-        or "kavram haritasi" in q_lower
-    )
+    is_mindmap = any(k in q_lower for k in (
+        "mindmap", "zihin haritası", "zihin haritasi", "hiyerarşik", "akış şeması", "akis semasi",
+        "flowchart", "graph", "kavram şeması", "kavram semasi", "kavram haritası", "kavram haritasi",
+    ))
     is_glossary = "sözlük" in q_lower or "sozluk" in q_lower or "terim" in q_lower or "glossary" in q_lower
-    is_exam = "sınav" in q_lower or "sinav" in q_lower or "vize" in q_lower or "final" in q_lower or "tahmin" in q_lower
+    is_exam = any(k in q_lower for k in ("sınav", "sinav", "vize", "final", "tahmin"))
     is_summary = "özet" in q_lower or "ozet" in q_lower or "maddeler halinde" in q_lower
 
-    limit_count = max(n_results, 8) if (is_mindmap or is_glossary or is_exam or is_summary) else n_results
+    if is_mindmap:
+        task_type = "mindmap"
+    elif is_glossary:
+        task_type = "glossary"
+    elif is_exam:
+        task_type = "exam"
+    elif is_summary:
+        task_type = "summary"
+    else:
+        task_type = "qa"
+
+    # --- Lokal CPU işi: vektör arama ile bağlam bulma ---
+    limit_count = max(n_results, 8) if task_type != "qa" else n_results
     retrieved_items = query_rag_notes(query=query, n_results=limit_count)
 
-    # Eğer sorgu semantik olarak az sonuç döndürdüyse doğrudan koleksiyondaki belgelerle takviye et
-    if len(retrieved_items) < 3 and total_docs > 0:
+    # Sorgu semantik olarak az sonuç döndürdüyse koleksiyondan takviye et
+    if len(retrieved_items) < 3:
         coll_data = collection.get(limit=min(12, total_docs))
         docs = coll_data.get("documents", []) or []
         metas = coll_data.get("metadatas", []) or []
@@ -848,15 +631,19 @@ def ask_rag_notes(
                 "snippet": item["text"][:300] + ("..." if len(item["text"]) > 300 else ""),
             })
 
-    # Dinamik Akıllı Mod Seçimi
-    if is_mindmap:
-        answer_text = _generate_mindmap_rag_answer(retrieved_items, collection)
-    elif is_glossary:
-        answer_text = _generate_glossary_rag_answer(retrieved_items)
-    elif is_exam:
-        answer_text = _generate_exam_predictions_rag_answer(retrieved_items, collection)
-    else:
-        answer_text = _generate_summary_rag_answer(retrieved_items, query, is_summary)
+    context = _build_context(retrieved_items)
+    postprocess, temperature, max_out = _TASK_CONFIG[task_type]
+
+    # --- Tüm zeka işi Gemini'de: cache -> Gemini -> distillation kaydı ---
+    answer_text = generate_with_distillation(
+        task_type=task_type,
+        instruction=query,
+        context=context,
+        prompt=_build_prompt(task_type, query, context),
+        temperature=temperature,
+        max_output_tokens=max(max_out, max_tokens),
+        postprocess=postprocess,
+    )
 
     return {
         "query": query,
@@ -924,21 +711,11 @@ def predict_exam_questions(
     past_questions_text: str = "",
     top_n: int = 5,
 ) -> Dict[str, Any]:
-    """Ders notları ve çıkmış sorulardan sınav soru tahmini yapar.
+    """Vize/Final sınav sorusu tahmini.
 
-    ChromaDB'deki tüm ders notu parçalarını ve isteğe bağlı olarak verilen
-    geçmiş sınav sorularını analiz ederek:
-    - Hoca'nın en sık odaklandığı konuları tespit eder
-    - Sınavda çıkma ihtimali yüksek konuları listeler
-    - Tahmin edilen yeni soru önerileri üretir
-    - Her konu için olasılık skoru hesaplar
-
-    Args:
-        past_questions_text: Geçmiş sınav soruları (düz metin). Boş bırakılabilir.
-        top_n: Kaç tahmin sorusu üretileceği.
-
-    Returns:
-        JSON serileştirilmiş tahmin raporu.
+    Lokal CPU yalnızca ChromaDB'den ham bağlamı toplar ve kelime frekansı çıkarır;
+    soruların üretimi Gemini (gemini-2.5-flash) tarafından yapılır.
+    Gemini kullanılamazsa GeminiUnavailableError fırlatılır.
     """
     collection = get_chroma_collection()
     total_chunks = collection.count()
@@ -950,93 +727,80 @@ def predict_exam_questions(
             "tahminler": [],
         }
 
-    # Tüm parçaları çek (max 50)
-    limit = min(50, total_chunks)
-    data = collection.get(limit=limit)
-    tum_metinler: List[str] = data.get("documents", []) or []
-    tum_metinler = [m for m in tum_metinler if m and m.strip()]
+    data = collection.get(limit=min(50, total_chunks))
+    tum_metinler: List[str] = [m for m in (data.get("documents", []) or []) if m and m.strip()]
 
-    # Konu / anahtar kelime frekans analizi
-    DURAK_KELIMELER = {
-        "ve", "veya", "ile", "bir", "bu", "da", "de", "ki", "ne", "mi",
-        "için", "olan", "gibi", "ise", "ama", "çok", "en", "her", "olan",
-        "olarak", "aynı", "olan", "daha", "kadar", "olan", "var", "ise",
+    # Lokal frekans analizi (üretim değil; yalnızca konu ağırlığı için)
+    durak = {
+        "ve", "veya", "ile", "bir", "bu", "da", "de", "ki", "ne", "mi", "için", "olan", "gibi",
+        "ise", "ama", "çok", "en", "her", "olarak", "aynı", "daha", "kadar", "var",
         "the", "of", "in", "is", "and", "to", "a",
     }
-
     kelime_sayaci: Counter = Counter()
-    cumle_sayaci: Counter = Counter()
-
     for metin in tum_metinler:
-        kelimeler = re.findall(r"[A-ZÇĞİÖŞÜa-zçğıöşü]{4,}", metin.lower())
-        anlamli = [k for k in kelimeler if k not in DURAK_KELIMELER]
-        kelime_sayaci.update(anlamli)
+        kelime_sayaci.update(k for k in re.findall(r"[A-ZÇĞİÖŞÜa-zçğıöşü]{4,}", metin.lower()) if k not in durak)
 
-        cumleler = re.split(r"(?<=[.!?])\s+", metin)
-        for cumle in cumleler:
-            cumle = cumle.strip()
-            if len(cumle) > 20:
-                cumle_sayaci[cumle] += 1
-
-    # Geçmiş sorulardan konu tespiti
-    gecmis_konu_agirligi: Counter = Counter()
+    gecmis_agirlik: Counter = Counter()
     if past_questions_text.strip():
-        gecmis_kelimeler = re.findall(r"[A-ZÇĞİÖŞÜa-zçğıöşü]{4,}", past_questions_text.lower())
-        gecmis_anlamli = [k for k in gecmis_kelimeler if k not in DURAK_KELIMELER]
-        gecmis_konu_agirligi.update(gecmis_anlamli)
+        gecmis_agirlik.update(
+            k for k in re.findall(r"[A-ZÇĞİÖŞÜa-zçğıöşü]{4,}", past_questions_text.lower()) if k not in durak
+        )
 
-    # En sık geçen konular (ders notlarından)
-    en_siklar = kelime_sayaci.most_common(30)
-
-    # Olasılık skoru = (ders notundaki frekans * 0.6) + (geçmiş sorulardaki frekans * 0.4)
     skor_tablosu: List[Dict[str, Any]] = []
-    for kelime, not_frekans in en_siklar:
-        gecmis_frekans = gecmis_konu_agirligi.get(kelime, 0)
-        olasilik_skoru = round((not_frekans * 0.6 + gecmis_frekans * 0.4) / max(total_chunks, 1), 4)
+    for kelime, frekans in kelime_sayaci.most_common(30):
+        gecmis = gecmis_agirlik.get(kelime, 0)
         skor_tablosu.append({
             "konu_anahtar_kelimesi": kelime,
-            "ders_notunda_gecme_sayisi": not_frekans,
-            "gecmis_sorularda_gecme": gecmis_frekans,
-            "tahmin_skoru": olasilik_skoru,
+            "ders_notunda_gecme_sayisi": frekans,
+            "gecmis_sorularda_gecme": gecmis,
+            "tahmin_skoru": round((frekans * 0.6 + gecmis * 0.4) / max(total_chunks, 1), 4),
         })
-
     skor_tablosu.sort(key=lambda x: x["tahmin_skoru"], reverse=True)
     en_onemli_konular = skor_tablosu[:top_n]
 
-    # Tahmin edilen sorular üret
-    tahmin_sorular: List[Dict[str, str]] = []
-    soru_sablonlari = [
-        "'{konu}' kavramını açıklayınız ve önemini belirtiniz.",
-        "'{konu}' ile ilgili temel özellikler nelerdir? Örnekler vererek anlatınız.",
-        "'{konu}' bağlamında karşılaşılan problemler nasıl çözülür?",
-        "'{konu}' konusunda doğru/yanlış sorular: Bu ifadenin doğruluğunu tartışınız.",
-        "'{konu}' ile ilgili tarihsel gelişim veya farklı yaklaşımları karşılaştırınız.",
-    ]
+    # --- Gemini: soru üretimi ---
+    context = _build_context([{"text": m} for m in tum_metinler])
+    konular = ", ".join(k["konu_anahtar_kelimesi"] for k in en_onemli_konular)
+    prompt = (
+        f"Aşağıdaki ders notlarına dayanarak üniversite Vize/Final sınavında çıkması en muhtemel {top_n} soruyu tahmin et.\n"
+        + (f"Geçmiş sınav soruları (üslup/odak için referans):\n{past_questions_text.strip()}\n\n" if past_questions_text.strip() else "")
+        + f"Notlarda öne çıkan anahtar kelimeler: {konular}\n\n"
+        "SADECE geçerli bir JSON objesi döndür (markdown bloğu yok):\n"
+        "{\"tahmin_sorular\": [{\"soru_no\": 1, \"tahmin_soru\": \"...\", \"konu\": \"...\", "
+        "\"cikmasi_muhtemel_neden\": \"...\", \"tahmin_skoru\": 0.0-1.0 arası sayı, "
+        "\"onem_seviyesi\": \"Yüksek|Orta|Düşük\"}]}\n\n"
+        f"DERS NOTU BAĞLAMI:\n\"\"\"\n{context}\n\"\"\""
+    )
 
-    for i, konu_bilgisi in enumerate(en_onemli_konular):
-        konu = konu_bilgisi["konu_anahtar_kelimesi"]
-        sablon = soru_sablonlari[i % len(soru_sablonlari)]
-        skor = konu_bilgisi["tahmin_skoru"]
-        tahmin_sorular.append({
-            "soru_no": i + 1,
-            "tahmin_soru": sablon.format(konu=konu.capitalize()),
-            "konu": konu.capitalize(),
-            "cikmasi_muhtemel_neden": (
-                f"'{konu}' terimi ders notlarında {konu_bilgisi['ders_notunda_gecme_sayisi']} kez geçmekte"
-                + (f" ve geçmiş sınavlarda {konu_bilgisi['gecmis_sorularda_gecme']} kez sorulmuştur." if konu_bilgisi['gecmis_sorularda_gecme'] > 0 else ".")
-            ),
-            "tahmin_skoru": skor,
-            "onem_seviyesi": "Yüksek" if skor > 0.3 else ("Orta" if skor > 0.1 else "Düşük"),
-        })
+    def _post(raw: str):
+        parsed = _extract_json_block(raw)
+        sorular = parsed.get("tahmin_sorular") if parsed else None
+        if not isinstance(sorular, list) or not sorular:
+            return None
+        for i, s in enumerate(sorular, 1):
+            if not isinstance(s, dict) or not s.get("tahmin_soru"):
+                return None
+            s["soru_no"] = i
+        return {"tahmin_sorular": sorular[:top_n]}
+
+    uretilen = generate_with_distillation(
+        task_type="exam_json",
+        instruction=f"Ders notlarından en olası {top_n} sınav sorusunu tahmin et. Geçmiş sorular: {past_questions_text.strip()}",
+        context=context,
+        prompt=prompt,
+        temperature=0.3,
+        max_output_tokens=3500,
+        postprocess=_post,
+    )
 
     return {
         "durum": "basarili",
         "analiz_edilen_parca_sayisi": len(tum_metinler),
         "gecmis_soru_analizi_yapildi": bool(past_questions_text.strip()),
         "en_onemli_konular": en_onemli_konular,
-        "tahmin_sorular": tahmin_sorular,
+        "tahmin_sorular": uretilen["tahmin_sorular"],
         "not": (
-            "Bu tahminler ders notlarındaki konu yoğunluğuna ve geçmiş sınav sorusu analizine dayalıdır. "
+            "Sorular Gemini (gemini-2.5-flash) tarafından ders notlarınıza ve konu yoğunluğuna göre üretilmiştir. "
             "Kesin sonuç vermez; rehber niteliğindedir."
         ),
     }
